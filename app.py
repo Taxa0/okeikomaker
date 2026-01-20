@@ -33,18 +33,18 @@ st.markdown("""
        特別なボタンの色設定
        --------------------------------------------------- */
     
-    /* 生成ボタン (Primary) */
+    /* ★修正: 生成ボタン (Primary) を水晶玉に合わせた紫色に */
     div.stButton > button[kind="primary"] {
-        background-color: #007bff !important;
-        border-color: #007bff !important;
+        background-color: #8e44ad !important; /* アメジスト色 */
+        border-color: #8e44ad !important;
         color: white !important;
         height: 50px !important;
         font-size: 18px !important;
         box-shadow: 0 2px 5px rgba(0,0,0,0.2);
     }
     div.stButton > button[kind="primary"]:hover {
-        background-color: #0056b3 !important;
-        border-color: #0056b3 !important;
+        background-color: #732d91 !important; /* 少し濃い紫 */
+        border-color: #732d91 !important;
     }
 
     /* ---------------------------------------------------
@@ -143,7 +143,6 @@ def solve_shift_schedule(df, min_list, max_list, roster_df=None):
     prob = pulp.LpProblem("Shift_Scheduler", pulp.LpMaximize)
     x = pulp.LpVariable.dicts("assign", ((d, m) for d in range(len(dates)) for m in range(len(members))), cat='Binary')
     
-    # ★追加: 参加意思のある部員(○か△が少なくとも1つある)を特定
     active_members_indices = []
     for m_idx, member in enumerate(members):
         s_series = df[member].astype(str).str.strip()
@@ -155,26 +154,20 @@ def solve_shift_schedule(df, min_list, max_list, roster_df=None):
         for m_idx, member in enumerate(members):
             val = df.iloc[d_idx, m_idx + 1]
             status = str(val).strip() if pd.notna(val) else "-"
-            
             score = 0
             if status == "○": score = 2
             elif status == "△": score = 1
-            else: 
-                # 参加不可の日は割り当てない
-                prob += x[d_idx, m_idx] == 0
+            else: prob += x[d_idx, m_idx] == 0
             preference_scores[(d_idx, m_idx)] = score
             
-    # 目的関数
     prob += pulp.lpSum([x[d, m] * preference_scores[(d, m)] for d in range(len(dates)) for m in range(len(members))])
     
-    # ★修正: 参加意思のある部員は【必ず1回】、それ以外は0回
     for m_idx in range(len(members)):
         if m_idx in active_members_indices:
             prob += pulp.lpSum([x[d, m_idx] for d in range(len(dates))]) == 1
         else:
             prob += pulp.lpSum([x[d, m_idx] for d in range(len(dates))]) == 0
     
-    # 人数制約
     for d in range(len(dates)):
         total_assigned = pulp.lpSum([x[d, m] for m in range(len(members))])
         val_min = int(min_list[d]) if pd.notna(min_list[d]) else 0
@@ -223,7 +216,6 @@ uploaded_roster = st.file_uploader("部員名簿", type=['csv'], label_visibilit
 
 clean_df = None
 
-# 名簿読み込み
 if uploaded_roster is not None:
     try:
         try: roster_df = pd.read_csv(uploaded_roster)
@@ -237,7 +229,6 @@ if uploaded_roster is not None:
     except Exception as e:
         st.error(f"名簿読み込みエラー: {e}")
 
-# 伝助読み込み
 if uploaded_file is not None:
     try:
         try: raw_df = pd.read_csv(uploaded_file)
@@ -280,7 +271,6 @@ if clean_df is not None:
         st.markdown("### 2. お稽古の人数を設定する")
         st.info(f"出席可能者: **{num_attendees} / {total_members} 名** (全{total_days}日程)")
         
-        # 名簿チェック
         if st.session_state.roster_df is not None:
             r_df = st.session_state.roster_df
             with st.expander("部員の回答状況を確認する", expanded=True):
@@ -288,17 +278,14 @@ if clean_df is not None:
                 
                 roster_members_list = [str(n).strip() for n in r_df['氏名'].tolist()]
                 
-                # 1. 伝助にあるが名簿にない
                 unknown_in_densuke = [m for m in densuke_members if m not in roster_members_list]
                 if unknown_in_densuke:
-                    st.warning(f"⚠️ **名簿に登録されていない名前が伝助に見つかりました ({len(unknown_in_densuke)}名 / 表記ゆれの可能性があります):**\n\n{', '.join(unknown_in_densuke)}")
+                    st.warning(f"⚠️ 【{len(unknown_in_densuke)}名】 **名簿に登録されていない名前が伝助に見つかりました (表記ゆれの可能性があります):**\n\n{', '.join(unknown_in_densuke)}")
 
-                # 2. 名簿にあるが伝助にない
                 unanswered_members = [m for m in roster_members_list if m not in densuke_members]
                 if unanswered_members:
-                    st.error(f"🚨 **未回答者 ({len(unanswered_members)}名):**\n\n{', '.join(unanswered_members)}")
+                    st.error(f"🚨 【{len(unanswered_members)}名】 **未回答者:**\n\n{', '.join(unanswered_members)}")
 
-                # 3. 回答状況表
                 status_data = []
                 for _, row in r_df.iterrows():
                     name = str(row.get('氏名', '')).strip()
@@ -332,7 +319,7 @@ if clean_df is not None:
 
         edited_settings = st.data_editor(st.session_state.settings_df, hide_index=True, width='stretch', height=200)
 
-        if st.button("お稽古生成", type="primary", use_container_width=True):
+        if st.button("🔮 お稽古生成 🔮", type="primary", use_container_width=True):
             min_l = edited_settings["最小人数"].fillna(0).astype(int).tolist()
             max_l = edited_settings["最大人数"].fillna(1).astype(int).tolist()
             if sum(min_l) > num_attendees: st.warning("※ 設定された最小人数の合計が、出席可能者数を超えています。")
@@ -343,9 +330,7 @@ if clean_df is not None:
                 st.session_state.editing_member = None
                 st.session_state.editing_date = None
                 st.rerun()
-            else:
-                # ★修正: エラーメッセージ
-                st.error("お稽古を作成できませんでした。参加希望者全員を1回ずつ割り当てるための枠が足りないか、日程の都合がつきません。人数の上限を増やすなど条件を見直してください。")
+            else: st.error("お稽古を作成できませんでした。参加希望者全員を1回ずつ割り当てるための枠が足りないか、日程の都合がつきません。人数の上限を増やすなど条件を見直してください。")
 
         # --- 手順3 ---
         if st.session_state.shift_result is not None:
@@ -412,6 +397,9 @@ if clean_df is not None:
                             st.rerun()
                 else:
                     st.info("部員または日程をクリックして調整できます")
+            
+            # ★修正: 文言変更
+            st.caption("PCもしくはiPadでの編集をお勧めします。スマートフォンの場合は画面を横向きにしてください。")
             st.write("")
 
             current_df = st.session_state.shift_result
@@ -588,7 +576,8 @@ if clean_df is not None:
             # --- テキストプレビュー ---
             st.write("---")
             st.markdown("#### テキストプレビュー (コピー用)")
-            st.caption("※(△)について、伝助のコメントを確認した上で、「遅れ」もしくは「早退」に書き換えてください。")
+            # ★修正: 文言変更
+            st.caption("※(△)について、伝助のコメントを確認し、「遅れ」もしくは「早退」に書き換えた上でご利用ください。")
             text_output = ""
             for _, row in current_df.iterrows():
                 date_str = row['日程']
