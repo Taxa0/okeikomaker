@@ -113,16 +113,39 @@ st.markdown("""
 # --- 関数定義 ---
 
 def clean_data(raw_df):
+    comments_data = {}
+    has_comment_row = False
+    
     if len(raw_df) > 0:
         first_col = raw_df.iloc[:, 0].astype(str).fillna("")
+        
+        # ★コメント行の抽出
+        # 通常、伝助のコメント行は一番左の列が「コメント」になっている
+        comment_rows = raw_df[first_col.str.contains('コメント', na=False)]
+        
+        if not comment_rows.empty:
+            has_comment_row = True
+            # 最後の行がコメント行である可能性が高いが、検索でヒットした最初の行を使用
+            c_row_idx = comment_rows.index[-1] 
+            
+            # 各列（部員）のコメントを取得
+            # 列1以降が部員データと仮定
+            for col in raw_df.columns[1:]:
+                val = raw_df.at[c_row_idx, col]
+                if pd.notna(val) and str(val).strip() != "":
+                    comments_data[col] = str(val).strip()
+        
+        # データのクリーニング（コメント行や更新日時行を除外）
         ignore_keywords = ['最終更新日時', 'コメント']
         mask = ~first_col.apply(lambda x: any(x.startswith(k) for k in ignore_keywords))
         clean_df = raw_df[mask].reset_index(drop=True)
     else:
         clean_df = raw_df
+        
     if len(clean_df.columns) > 0 and "Unnamed" in str(clean_df.columns[0]):
         clean_df.rename(columns={clean_df.columns[0]: '日程'}, inplace=True)
-    return clean_df
+        
+    return clean_df, comments_data, has_comment_row
 
 def sort_members_by_roster(member_list, roster_df):
     if not member_list: return []
@@ -143,14 +166,12 @@ def solve_shift_schedule(df, min_list, max_list, roster_df=None):
     prob = pulp.LpProblem("Shift_Scheduler", pulp.LpMaximize)
     x = pulp.LpVariable.dicts("assign", ((d, m) for d in range(len(dates)) for m in range(len(members))), cat='Binary')
     
-    # 1. 参加意思のある部員(○か△が少なくとも1つある)を特定
     active_members_indices = []
     for m_idx, member in enumerate(members):
         s_series = df[member].astype(str).str.strip()
         if any(s in ['○', '△'] for s in s_series):
             active_members_indices.append(m_idx)
 
-    # 2. 希望スコアの計算
     preference_scores = {}
     for d_idx, date in enumerate(dates):
         for m_idx, member in enumerate(members):
@@ -159,47 +180,37 @@ def solve_shift_schedule(df, min_list, max_list, roster_df=None):
             score = 0
             if status == "○": score = 2
             elif status == "△": score = 1
-            else: prob += x[d_idx, m_idx] == 0 # 不可の日は0固定
+            else: prob += x[d_idx, m_idx] == 0
             preference_scores[(d_idx, m_idx)] = score
             
-    # 3. 学年考慮ロジック (ペナルティ項)
+    # ペナルティ項 (学年重複)
     penalty_term = 0
     if roster_df is not None and '学年' in roster_df.columns:
-        # マッピング作成
         member_grade_map = {str(row['氏名']).strip(): str(row['学年']).strip() for _, row in roster_df.iterrows()}
         unique_grades = set(member_grade_map.values())
-        # 空文字やnanを除去
         unique_grades = {g for g in unique_grades if g and g.lower() != 'nan'}
         
-        # 超過変数: 各日程・各学年で「1人を超えて何人いるか」
         excess = pulp.LpVariable.dicts("excess", 
                                        ((d, g) for d in range(len(dates)) for g in unique_grades),
                                        lowBound=0, cat='Integer')
-        
         for d in range(len(dates)):
             for g in unique_grades:
-                # この学年に該当する部員のindexリスト
                 grade_member_indices = [i for i, m in enumerate(members) if member_grade_map.get(m) == g]
                 if grade_member_indices:
-                    # 制約: (その日のその学年の人数) <= 1 + excess
-                    # つまり、人数が0か1ならexcess=0でOK。2人ならexcess=1、3人ならexcess=2...
                     prob += pulp.lpSum([x[d, i] for i in grade_member_indices]) <= 1 + excess[d, g]
-        
-        # ペナルティ総和 (重み10: 結構重くすることで、可能な限り回避させる)
         penalty_term = pulp.lpSum([excess[d, g] for d in range(len(dates)) for g in unique_grades]) * 10
 
-    # 4. 目的関数を設定 (希望スコア - 学年重複ペナルティ)
+    # 目的関数
     base_score = pulp.lpSum([x[d, m] * preference_scores[(d, m)] for d in range(len(dates)) for m in range(len(members))])
     prob += base_score - penalty_term
     
-    # 5. 制約: 参加意思のある部員は【必ず1回】、それ以外は0回
+    # 参加者は必ず1回
     for m_idx in range(len(members)):
         if m_idx in active_members_indices:
             prob += pulp.lpSum([x[d, m_idx] for d in range(len(dates))]) == 1
         else:
             prob += pulp.lpSum([x[d, m_idx] for d in range(len(dates))]) == 0
     
-    # 6. 制約: 1日あたりの定員 (Min/Max)
     for d in range(len(dates)):
         total_assigned = pulp.lpSum([x[d, m] for m in range(len(members))])
         val_min = int(min_list[d]) if pd.notna(min_list[d]) else 0
@@ -207,7 +218,6 @@ def solve_shift_schedule(df, min_list, max_list, roster_df=None):
         prob += total_assigned >= val_min
         prob += total_assigned <= val_max
 
-    # 計算実行
     prob.solve(pulp.PULP_CBC_CMD(msg=0))
     
     if pulp.LpStatus[prob.status] == "Optimal":
@@ -238,6 +248,8 @@ if 'shift_result' not in st.session_state: st.session_state.shift_result = None
 if 'editing_member' not in st.session_state: st.session_state.editing_member = None 
 if 'editing_date' not in st.session_state: st.session_state.editing_date = None
 if 'roster_df' not in st.session_state: st.session_state.roster_df = None
+if 'comments_data' not in st.session_state: st.session_state.comments_data = {}
+if 'has_comment_row' not in st.session_state: st.session_state.has_comment_row = False
 
 # --- 手順1 ---
 st.markdown("### 1. 伝助からCSVファイルをダウンロードし、以下にアップロードする")
@@ -249,7 +261,6 @@ uploaded_roster = st.file_uploader("部員名簿", type=['csv'], label_visibilit
 
 clean_df = None
 
-# 名簿読み込み
 if uploaded_roster is not None:
     try:
         try: roster_df = pd.read_csv(uploaded_roster)
@@ -263,14 +274,17 @@ if uploaded_roster is not None:
     except Exception as e:
         st.error(f"名簿読み込みエラー: {e}")
 
-# 伝助読み込み
 if uploaded_file is not None:
     try:
         try: raw_df = pd.read_csv(uploaded_file)
         except UnicodeDecodeError:
             uploaded_file.seek(0)
             raw_df = pd.read_csv(uploaded_file, encoding='cp932')
-        clean_df = clean_data(raw_df)
+        # ★修正: コメントデータも受け取る
+        clean_df, comments_data, has_comment_row = clean_data(raw_df)
+        st.session_state.comments_data = comments_data
+        st.session_state.has_comment_row = has_comment_row
+        
         if 'last_filename' not in st.session_state or st.session_state.last_filename != uploaded_file.name:
              st.session_state.last_filename = uploaded_file.name
              st.session_state.shift_result = None
@@ -306,25 +320,17 @@ if clean_df is not None:
         st.markdown("### 2. お稽古の人数を設定する")
         st.info(f"出席可能者: **{num_attendees} / {total_members} 名** (全{total_days}日程)")
         
-        # 名簿チェック
         if st.session_state.roster_df is not None:
             r_df = st.session_state.roster_df
             with st.expander("部員の回答状況を確認する", expanded=True):
                 densuke_members = clean_df.columns[1:].tolist()
-                
                 roster_members_list = [str(n).strip() for n in r_df['氏名'].tolist()]
-                
-                # 1. 伝助にあるが名簿にない
                 unknown_in_densuke = [m for m in densuke_members if m not in roster_members_list]
                 if unknown_in_densuke:
                     st.warning(f"⚠️ **名簿に登録されていない名前が伝助に見つかりました ({len(unknown_in_densuke)}名 / 表記ゆれの可能性があります):**\n\n{', '.join(unknown_in_densuke)}")
-
-                # 2. 名簿にあるが伝助にない
                 unanswered_members = [m for m in roster_members_list if m not in densuke_members]
                 if unanswered_members:
                     st.error(f"🚨 **未回答者 ({len(unanswered_members)}名):**\n\n{', '.join(unanswered_members)}")
-
-                # 3. 回答状況表
                 status_data = []
                 for _, row in r_df.iterrows():
                     name = str(row.get('氏名', '')).strip()
@@ -335,7 +341,6 @@ if clean_df is not None:
                         if any(v.strip() in ['○', '△'] for v in person_vals): status = "〇"
                         else: status = "欠席"
                     status_data.append({"氏名": name, "状況": status})
-                
                 if status_data:
                     st.dataframe(pd.DataFrame(status_data), hide_index=True, use_container_width=True)
 
@@ -373,7 +378,6 @@ if clean_df is not None:
 
         # --- 手順3 ---
         if st.session_state.shift_result is not None:
-            # JS
             js_code = """
             <script>
                 function applyColors() {
@@ -382,27 +386,18 @@ if clean_df is not None:
                         const text = btn.innerText;
                         if (text.includes('\u200b\u200b')) {
                             if (text.includes('(△)')) {
-                                btn.style.backgroundColor = '#ffc107';
-                                btn.style.color = 'black';
-                                btn.style.borderColor = '#ffc107';
+                                btn.style.backgroundColor = '#ffc107'; btn.style.color = 'black'; btn.style.borderColor = '#ffc107';
                             } else {
-                                btn.style.backgroundColor = '#28a745';
-                                btn.style.color = 'white';
-                                btn.style.borderColor = '#28a745';
+                                btn.style.backgroundColor = '#28a745'; btn.style.color = 'white'; btn.style.borderColor = '#28a745';
                             }
                             return;
                         } 
                         if (text.includes('\u200b')) {
-                            btn.style.backgroundColor = '#ff4b4b';
-                            btn.style.color = 'white';
-                            btn.style.borderColor = '#ff4b4b';
-                            btn.style.opacity = '1.0';
+                            btn.style.backgroundColor = '#ff4b4b'; btn.style.color = 'white'; btn.style.borderColor = '#ff4b4b'; btn.style.opacity = '1.0';
                             return;
                         } 
                         if (!text.includes('生成') && !text.includes('解除')) {
-                             btn.style.backgroundColor = '';
-                             btn.style.color = '';
-                             btn.style.borderColor = '';
+                             btn.style.backgroundColor = ''; btn.style.color = ''; btn.style.borderColor = '';
                         }
                     });
                 }
@@ -459,12 +454,10 @@ if clean_df is not None:
 
             for date_idx, date_val in enumerate(dates_list):
                 c_date, c_members = st.columns([1.2, 8], gap="small")
-                
                 with c_date:
                     btn_label = date_val
                     disabled_state = False
                     on_click = "select_date"
-
                     if st.session_state.editing_member:
                         member_a = st.session_state.editing_member['name']
                         date_a = st.session_state.editing_member['source_date']
@@ -479,7 +472,6 @@ if clean_df is not None:
                     elif st.session_state.editing_date == date_val:
                         btn_label += "\u200b"
                         on_click = "cancel_date"
-
                     if st.button(btn_label, key=f"d_{date_val}", disabled=disabled_state, use_container_width=True):
                         if on_click == "select_date":
                             st.session_state.editing_date = date_val
@@ -505,38 +497,30 @@ if clean_df is not None:
                             st.session_state.shift_result = current_df
                             st.session_state.editing_member = None
                             st.rerun()
-
                 with c_members:
                     row_idx = date_to_row.get(date_val)
                     if row_idx is not None:
                         assigned_val = current_df.at[row_idx, "担当者"]
                         assigned_list = str(assigned_val).split(", ") if pd.notna(assigned_val) and str(assigned_val) != "" else []
                         cols = st.columns(col_ratios, gap="small")
-                        
                         for i, member_b in enumerate(assigned_list):
                             is_mem_edit = st.session_state.editing_member is not None
                             is_date_edit = st.session_state.editing_date is not None
                             is_self_mem = (is_mem_edit and st.session_state.editing_member['name'] == member_b and st.session_state.editing_member['source_date'] == date_val)
                             is_locked = not can_member_move(clean_df, date_val, member_b)
-                            
                             if not is_mem_edit and not is_date_edit and is_locked:
                                 lock_label = member_b
                                 if member_b in grade_map: lock_label = f"{grade_map[member_b]}.{member_b}"
                                 cols[i].markdown(f"<div class='locked-member'>🔒{lock_label}</div>", unsafe_allow_html=True)
                                 continue 
-                            
                             display_name = member_b
-                            if member_b in grade_map:
-                                display_name = f"{grade_map[member_b]}.{member_b}"
-                            
+                            if member_b in grade_map: display_name = f"{grade_map[member_b]}.{member_b}"
                             status_this_day = get_status(clean_df, date_val, member_b)
                             label = display_name
                             if status_this_day == "△": label += "(△)"
-
                             btn_key = f"b_{date_val}_{member_b}"
                             on_click = "select_member"
                             disabled_state = False
-                            
                             if is_mem_edit:
                                 if is_self_mem:
                                     label += "\u200b"
@@ -555,7 +539,6 @@ if clean_df is not None:
                                         if stat_a in ["○", "△"] and stat_b in ["○", "△"]:
                                             label += "\u200b\u200b"
                                             on_click = "swap"
-
                             elif is_date_edit:
                                 tgt_date = st.session_state.editing_date
                                 if is_locked:
@@ -568,7 +551,6 @@ if clean_df is not None:
                                     if stat in ["○", "△"]:
                                         label += "\u200b\u200b"
                                         on_click = "move_to_date"
-
                             if cols[i].button(label, key=btn_key, disabled=disabled_state, use_container_width=True):
                                 if on_click == "select_member":
                                     st.session_state.editing_member = {'name': member_b, 'source_date': date_val}
@@ -631,3 +613,54 @@ if clean_df is not None:
                     text_output += f"{date_str}{members_str_jp}\n"
             
             st.text_area("以下のテキストをコピーして使用してください", text_output, height=300, label_visibility="collapsed")
+
+            # --- ★追加機能: 伝助コメント欄 ---
+            st.write("---")
+            st.subheader("伝助コメント欄")
+            
+            if not st.session_state.has_comment_row:
+                st.warning("※ 伝助のCSVファイルにコメントの行が存在しませんでした")
+            else:
+                comments_text = ""
+                cm_data = st.session_state.comments_data
+                
+                # 1. お稽古の日程順 (決定者)
+                # 全ての割り当て済みメンバーをセットで管理して、後で除外に使用
+                assigned_members_set = set()
+                
+                for _, row in current_df.iterrows():
+                    date_str = row['日程']
+                    raw_members = row['担当者']
+                    if raw_members:
+                        member_list = raw_members.split(", ")
+                        for m in member_list:
+                            assigned_members_set.add(m)
+                            if m in cm_data:
+                                comments_text += f"{date_str} {m}：{cm_data[m]}\n"
+                
+                # 名簿情報の準備
+                densuke_members = clean_df.columns[1:].tolist()
+                roster_members = []
+                if st.session_state.roster_df is not None:
+                    roster_members = [str(n).strip() for n in st.session_state.roster_df['氏名'].tolist()]
+                
+                # 2. 表記ゆれ (伝助にいるが名簿にいない & 未決定)
+                # もし名簿がない場合は全員「名簿にいない」扱いになるが、仕様上「名簿アップロード時」の挙動を想定
+                # 名簿がない場合は roster_members は空なので、全員 unknown になる
+                unknown_in_densuke = [m for m in densuke_members if m not in roster_members]
+                
+                for m in unknown_in_densuke:
+                    if m not in assigned_members_set and m in cm_data:
+                        comments_text += f"(表記ゆれ) {m}：{cm_data[m]}\n"
+                
+                # 3. 不参加 (名簿にいるが未決定)
+                # 名簿がない場合は roster_members が空なのでここは出力されない (正しい)
+                # 名簿がある場合、未決定者 (かつ伝助にデータがある人 = コメントがある可能性がある人)
+                for m in roster_members:
+                    if m in densuke_members and m not in assigned_members_set and m in cm_data:
+                        comments_text += f"(不参加) {m}：{cm_data[m]}\n"
+                
+                if comments_text:
+                    st.text_area("コメント一覧", comments_text, height=300, label_visibility="collapsed")
+                else:
+                    st.info("表示すべきコメントはありません")
