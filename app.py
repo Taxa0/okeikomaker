@@ -33,7 +33,7 @@ st.markdown("""
        特別なボタンの色設定
        --------------------------------------------------- */
     
-    /* ★修正: 生成ボタン (Primary) を水晶玉に合わせた紫色に */
+    /* 生成ボタン (Primary) */
     div.stButton > button[kind="primary"] {
         background-color: #8e44ad !important; /* アメジスト色 */
         border-color: #8e44ad !important;
@@ -143,12 +143,14 @@ def solve_shift_schedule(df, min_list, max_list, roster_df=None):
     prob = pulp.LpProblem("Shift_Scheduler", pulp.LpMaximize)
     x = pulp.LpVariable.dicts("assign", ((d, m) for d in range(len(dates)) for m in range(len(members))), cat='Binary')
     
+    # 1. 参加意思のある部員(○か△が少なくとも1つある)を特定
     active_members_indices = []
     for m_idx, member in enumerate(members):
         s_series = df[member].astype(str).str.strip()
         if any(s in ['○', '△'] for s in s_series):
             active_members_indices.append(m_idx)
 
+    # 2. 希望スコアの計算
     preference_scores = {}
     for d_idx, date in enumerate(dates):
         for m_idx, member in enumerate(members):
@@ -157,17 +159,47 @@ def solve_shift_schedule(df, min_list, max_list, roster_df=None):
             score = 0
             if status == "○": score = 2
             elif status == "△": score = 1
-            else: prob += x[d_idx, m_idx] == 0
+            else: prob += x[d_idx, m_idx] == 0 # 不可の日は0固定
             preference_scores[(d_idx, m_idx)] = score
             
-    prob += pulp.lpSum([x[d, m] * preference_scores[(d, m)] for d in range(len(dates)) for m in range(len(members))])
+    # 3. 学年考慮ロジック (ペナルティ項)
+    penalty_term = 0
+    if roster_df is not None and '学年' in roster_df.columns:
+        # マッピング作成
+        member_grade_map = {str(row['氏名']).strip(): str(row['学年']).strip() for _, row in roster_df.iterrows()}
+        unique_grades = set(member_grade_map.values())
+        # 空文字やnanを除去
+        unique_grades = {g for g in unique_grades if g and g.lower() != 'nan'}
+        
+        # 超過変数: 各日程・各学年で「1人を超えて何人いるか」
+        excess = pulp.LpVariable.dicts("excess", 
+                                       ((d, g) for d in range(len(dates)) for g in unique_grades),
+                                       lowBound=0, cat='Integer')
+        
+        for d in range(len(dates)):
+            for g in unique_grades:
+                # この学年に該当する部員のindexリスト
+                grade_member_indices = [i for i, m in enumerate(members) if member_grade_map.get(m) == g]
+                if grade_member_indices:
+                    # 制約: (その日のその学年の人数) <= 1 + excess
+                    # つまり、人数が0か1ならexcess=0でOK。2人ならexcess=1、3人ならexcess=2...
+                    prob += pulp.lpSum([x[d, i] for i in grade_member_indices]) <= 1 + excess[d, g]
+        
+        # ペナルティ総和 (重み10: 結構重くすることで、可能な限り回避させる)
+        penalty_term = pulp.lpSum([excess[d, g] for d in range(len(dates)) for g in unique_grades]) * 10
+
+    # 4. 目的関数を設定 (希望スコア - 学年重複ペナルティ)
+    base_score = pulp.lpSum([x[d, m] * preference_scores[(d, m)] for d in range(len(dates)) for m in range(len(members))])
+    prob += base_score - penalty_term
     
+    # 5. 制約: 参加意思のある部員は【必ず1回】、それ以外は0回
     for m_idx in range(len(members)):
         if m_idx in active_members_indices:
             prob += pulp.lpSum([x[d, m_idx] for d in range(len(dates))]) == 1
         else:
             prob += pulp.lpSum([x[d, m_idx] for d in range(len(dates))]) == 0
     
+    # 6. 制約: 1日あたりの定員 (Min/Max)
     for d in range(len(dates)):
         total_assigned = pulp.lpSum([x[d, m] for m in range(len(members))])
         val_min = int(min_list[d]) if pd.notna(min_list[d]) else 0
@@ -175,6 +207,7 @@ def solve_shift_schedule(df, min_list, max_list, roster_df=None):
         prob += total_assigned >= val_min
         prob += total_assigned <= val_max
 
+    # 計算実行
     prob.solve(pulp.PULP_CBC_CMD(msg=0))
     
     if pulp.LpStatus[prob.status] == "Optimal":
@@ -216,6 +249,7 @@ uploaded_roster = st.file_uploader("部員名簿", type=['csv'], label_visibilit
 
 clean_df = None
 
+# 名簿読み込み
 if uploaded_roster is not None:
     try:
         try: roster_df = pd.read_csv(uploaded_roster)
@@ -229,6 +263,7 @@ if uploaded_roster is not None:
     except Exception as e:
         st.error(f"名簿読み込みエラー: {e}")
 
+# 伝助読み込み
 if uploaded_file is not None:
     try:
         try: raw_df = pd.read_csv(uploaded_file)
@@ -271,6 +306,7 @@ if clean_df is not None:
         st.markdown("### 2. お稽古の人数を設定する")
         st.info(f"出席可能者: **{num_attendees} / {total_members} 名** (全{total_days}日程)")
         
+        # 名簿チェック
         if st.session_state.roster_df is not None:
             r_df = st.session_state.roster_df
             with st.expander("部員の回答状況を確認する", expanded=True):
@@ -278,14 +314,17 @@ if clean_df is not None:
                 
                 roster_members_list = [str(n).strip() for n in r_df['氏名'].tolist()]
                 
+                # 1. 伝助にあるが名簿にない
                 unknown_in_densuke = [m for m in densuke_members if m not in roster_members_list]
                 if unknown_in_densuke:
-                    st.warning(f"⚠️ 【{len(unknown_in_densuke)}名】 **名簿に登録されていない名前が伝助に見つかりました (表記ゆれの可能性があります):**\n\n{', '.join(unknown_in_densuke)}")
+                    st.warning(f"⚠️ **名簿に登録されていない名前が伝助に見つかりました ({len(unknown_in_densuke)}名 / 表記ゆれの可能性があります):**\n\n{', '.join(unknown_in_densuke)}")
 
+                # 2. 名簿にあるが伝助にない
                 unanswered_members = [m for m in roster_members_list if m not in densuke_members]
                 if unanswered_members:
-                    st.error(f"🚨 【{len(unanswered_members)}名】 **未回答者:**\n\n{', '.join(unanswered_members)}")
+                    st.error(f"🚨 **未回答者 ({len(unanswered_members)}名):**\n\n{', '.join(unanswered_members)}")
 
+                # 3. 回答状況表
                 status_data = []
                 for _, row in r_df.iterrows():
                     name = str(row.get('氏名', '')).strip()
@@ -398,7 +437,6 @@ if clean_df is not None:
                 else:
                     st.info("部員または日程をクリックして調整できます")
             
-            # ★修正: 文言変更
             st.caption("PCもしくはiPadでの編集をお勧めします。スマートフォンの場合は画面を横向きにしてください。")
             st.write("")
 
@@ -576,7 +614,6 @@ if clean_df is not None:
             # --- テキストプレビュー ---
             st.write("---")
             st.markdown("#### テキストプレビュー (コピー用)")
-            # ★修正: 文言変更
             st.caption("※(△)について、伝助のコメントを確認し、「遅れ」もしくは「早退」に書き換えた上でご利用ください。")
             text_output = ""
             for _, row in current_df.iterrows():
