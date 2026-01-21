@@ -8,7 +8,7 @@ import io
 from datetime import datetime
 
 # ==========================================
-# ページ設定 (アイコンはここで変更できます)
+# ページ設定
 # ==========================================
 st.set_page_config(
     page_title="お稽古メーカー", 
@@ -16,16 +16,46 @@ st.set_page_config(
     layout="wide"
 )
 
+# ★修正: ブラウザの「翻訳しますか？」を出なくするためのJavascript
+# HTMLのlang属性を'ja'に強制設定します
+components.html("""
+    <script>
+        const setLang = () => {
+            document.documentElement.setAttribute('lang', 'ja');
+        };
+        setLang();
+        // 念のため定期的に監視して設定（SPA対策）
+        new MutationObserver(setLang).observe(document.documentElement, { attributes: true });
+    </script>
+""", height=0, width=0)
+
 # ==========================================
 # CSS設定
 # ==========================================
 st.markdown("""
 <style>
+    /* アプリ全体のプライマリーカラー（メイン色）をアメジスト色に強制統一 */
+    :root {
+        --primary-color: #8e44ad;
+    }
+
     /* 全体の余白 */
     .block-container { padding-top: 3rem; padding-bottom: 2rem; }
     div[data-testid="stVerticalBlock"] > div { gap: 0rem !important; }
     div[data-testid="column"] { padding: 0px !important; }
     
+    /* --- トグルスイッチの強力な色上書き --- */
+    /* Streamlitのデフォルト(赤)を打ち消す設定 */
+    div[data-testid="stToggle"] label input:checked + div {
+        background-color: #8e44ad !important;
+        border-color: #8e44ad !important;
+        color: #8e44ad !important;
+    }
+    /* トグルのトラック部分 */
+    div[data-testid="stToggle"] div[aria-checked="true"] {
+        background-color: #8e44ad !important;
+    }
+
     /* --- ボタン共通スタイル (通常ボタン) --- */
     .stButton { margin: 0px !important; padding: 0px !important; }
     .stButton button {
@@ -54,21 +84,21 @@ st.markdown("""
     }
 
     /* --- ダウンロードボタン (Save) --- */
-    /* 保存ボタンらしい青色にし、目立たせる */
+    /* テーマカラー(アメジスト)に変更 */
     div[data-testid="stDownloadButton"] > button {
-        background-color: #2980b9 !important; /* Save Blue */
-        border-color: #2980b9 !important;
+        background-color: #8e44ad !important; /* Amethyst */
+        border-color: #8e44ad !important;
         color: white !important;
         font-weight: bold !important;
-        height: 45px !important; /* 少し高さを出す */
+        height: 45px !important;
         font-size: 16px !important;
         border-radius: 5px !important;
         box-shadow: 0 2px 4px rgba(0,0,0,0.2);
         transition: all 0.2s ease-in-out;
     }
     div[data-testid="stDownloadButton"] > button:hover {
-        background-color: #1f618d !important; /* Darker Blue */
-        border-color: #1f618d !important;
+        background-color: #732d91 !important; /* Darker Amethyst */
+        border-color: #732d91 !important;
         transform: translateY(-1px);
         box-shadow: 0 4px 6px rgba(0,0,0,0.25);
     }
@@ -293,7 +323,14 @@ help_text_densuke = """
 """
 uploaded_file = st.file_uploader("**伝助のCSVファイルをアップロード**", type=['csv'], help=help_text_densuke)
 
-help_text_roster = "一行目: 氏名,学年 | 二行目以降: 名前,1 の形式"
+help_text_roster = """部員名簿のアップロードは任意ですが、アップロードすることにより、部員の回答状況を知ることができたり、お稽古を組んだ後に名前の順番を学年が上の方から自動で並べられたり、お稽古カウンター等の付加情報をお稽古編集時に知ることができたりするなど、メリットが多いのでアップロードを推奨します。
+
+部員名簿の形式について
+一列目:氏名、二列目:学年、三列目(任意):付加情報(お稽古カウンター等)
+例:
+森下,6(6年制の森下さん)
+山田,4,7(4年生のお稽古カウンターが7回の山田さん)"""
+
 uploaded_roster = st.file_uploader("**(任意) 部員名簿CSVファイルをアップロード**", type=['csv'], key="roster", help=help_text_roster)
 
 if uploaded_roster is not None:
@@ -328,7 +365,7 @@ if uploaded_file is not None:
         st.error(f"ファイル読み込みエラー: {e}")
 
 st.write("")
-with st.expander("📂 保存したファイルから作業を再開"):
+with st.expander("保存したファイルから作業を再開"):
     uploaded_resume = st.file_uploader("**バックアップファイル (.okeiko)をアップロード**", type=['okeiko'], key="resume_uploader")
     if uploaded_resume is not None:
         if st.session_state.loaded_resume_name != uploaded_resume.name:
@@ -478,6 +515,27 @@ if clean_df is not None:
                     const buttons = window.parent.document.querySelectorAll('button');
                     buttons.forEach(btn => {
                         const text = btn.innerText;
+                        if (text.includes('\u200E')) {
+                            if (text.includes('\u200b')) {
+                                btn.style.backgroundColor = '#ff4b4b'; 
+                                btn.style.color = 'white'; 
+                                btn.style.borderColor = '#ff4b4b';
+                            } else {
+                                btn.style.backgroundColor = '#5D6D7E'; 
+                                btn.style.color = 'white'; 
+                                btn.style.borderColor = '#5D6D7E';
+                            }
+                            return;
+                        }
+                        if (text.includes('\u200b')) {
+                            if (!text.includes('\u200b\u200b')) {
+                                btn.style.backgroundColor = '#ff4b4b'; 
+                                btn.style.color = 'white'; 
+                                btn.style.borderColor = '#ff4b4b'; 
+                                btn.style.opacity = '1.0';
+                                return;
+                            }
+                        } 
                         if (text.includes('\u200b\u200b')) {
                             if (text.includes('(△)')) {
                                 btn.style.backgroundColor = '#ffc107'; btn.style.color = 'black'; btn.style.borderColor = '#ffc107';
@@ -486,11 +544,7 @@ if clean_df is not None:
                             }
                             return;
                         } 
-                        if (text.includes('\u200b')) {
-                            btn.style.backgroundColor = '#ff4b4b'; btn.style.color = 'white'; btn.style.borderColor = '#ff4b4b'; btn.style.opacity = '1.0';
-                            return;
-                        } 
-                        if (!text.includes('生成') && !text.includes('解除') && !text.includes('保存') && !text.includes('リセット') && !text.includes('はい') && !text.includes('いいえ') && !text.includes('キャンセル')) {
+                        if (!text.includes('生成') && !text.includes('解除') && !text.includes('保存') && !text.includes('リセット') && !text.includes('はい') && !text.includes('いいえ') && !text.includes('キャンセル') && !text.includes('CSV') && !text.includes('名簿') && !text.includes('バックアップ')) {
                              btn.style.backgroundColor = ''; btn.style.color = ''; btn.style.borderColor = '';
                         }
                     });
@@ -524,9 +578,33 @@ if clean_df is not None:
                             st.session_state.editing_date = None
                             st.rerun()
                 else:
-                    st.info("部員または日程をクリックして調整できます")
+                    st.info("部員または日程をクリックして編集できます")
             
             st.caption("PCもしくはiPadでの編集をお勧めします。スマートフォンの場合は画面を横向きにしてください。")
+            
+            grade_map = {}
+            extra_map = {}
+            has_extra_col = False
+            col3_name = ""
+            
+            if st.session_state.roster_df is not None:
+                try:
+                    for _, r in st.session_state.roster_df.iterrows():
+                        grade_map[str(r['氏名']).strip()] = str(r['学年']).strip()
+                    
+                    if len(st.session_state.roster_df.columns) >= 3:
+                        has_extra_col = True
+                        col3_name = st.session_state.roster_df.columns[2]
+                        for _, r in st.session_state.roster_df.iterrows():
+                            val = r[col3_name]
+                            if pd.notna(val) and str(val).strip() != "":
+                                extra_map[str(r['氏名']).strip()] = str(val).strip()
+                except: pass
+            
+            show_extra_info = False
+            if has_extra_col:
+                show_extra_info = st.toggle(f"「{col3_name}」を表示する", value=True)
+
             st.write("")
 
             current_df = st.session_state.shift_result.copy()
@@ -538,18 +616,11 @@ if clean_df is not None:
                     count = len(str(val).split(", "))
                     if count > max_people_in_day: max_people_in_day = count
             col_ratios = [3] * max_people_in_day + [1] 
-            
-            grade_map = {}
-            if st.session_state.roster_df is not None:
-                try:
-                    for _, r in st.session_state.roster_df.iterrows():
-                        grade_map[str(r['氏名']).strip()] = str(r['学年']).strip()
-                except: pass
 
             for date_idx, date_val in enumerate(dates_list):
                 c_date, c_members = st.columns([1.2, 8], gap="small")
                 with c_date:
-                    btn_label = date_val
+                    btn_label = f"\u200E{date_val}"
                     disabled_state = False
                     on_click = "select_date"
                     if st.session_state.editing_member:
@@ -602,13 +673,15 @@ if clean_df is not None:
                             is_date_edit = st.session_state.editing_date is not None
                             is_self_mem = (is_mem_edit and st.session_state.editing_member['name'] == member_b and st.session_state.editing_member['source_date'] == date_val)
                             is_locked = not can_member_move(clean_df, date_val, member_b)
+                            display_name = member_b
+                            if member_b in grade_map: 
+                                display_name = f"{grade_map[member_b]}.{member_b}"
+                            if show_extra_info and member_b in extra_map:
+                                display_name += f"({extra_map[member_b]})"
                             if not is_mem_edit and not is_date_edit and is_locked:
-                                lock_label = member_b
-                                if member_b in grade_map: lock_label = f"{grade_map[member_b]}.{member_b}"
+                                lock_label = display_name
                                 cols[i].markdown(f"<div class='locked-member'>🔒{lock_label}</div>", unsafe_allow_html=True)
                                 continue 
-                            display_name = member_b
-                            if member_b in grade_map: display_name = f"{grade_map[member_b]}.{member_b}"
                             status_this_day = get_status(clean_df, date_val, member_b)
                             label = display_name
                             if status_this_day == "△": label += "(△)"
@@ -629,12 +702,11 @@ if clean_df is not None:
                                             label += "\u200b\u200b"
                                             on_click = "swap"
                                         elif is_locked:
-                                            lock_label = member_b
-                                            if member_b in grade_map: lock_label = f"{grade_map[member_b]}.{member_b}"
+                                            lock_label = display_name
                                             cols[i].markdown(f"<div class='locked-member'>🔒{lock_label}</div>", unsafe_allow_html=True)
                                             continue
                                     elif is_locked:
-                                        cols[i].markdown(f"<div class='locked-member'>🔒{member_b}</div>", unsafe_allow_html=True)
+                                        cols[i].markdown(f"<div class='locked-member'>🔒{display_name}</div>", unsafe_allow_html=True)
                                         continue
                             elif is_date_edit:
                                 tgt_date = st.session_state.editing_date
@@ -644,12 +716,11 @@ if clean_df is not None:
                                         label += "\u200b\u200b"
                                         on_click = "move_to_date"
                                     elif is_locked:
-                                        lock_label = member_b
-                                        if member_b in grade_map: lock_label = f"{grade_map[member_b]}.{member_b}"
+                                        lock_label = display_name
                                         cols[i].markdown(f"<div class='locked-member'>🔒{lock_label}</div>", unsafe_allow_html=True)
                                         continue
                                 elif is_locked:
-                                    cols[i].markdown(f"<div class='locked-member'>🔒{member_b}</div>", unsafe_allow_html=True)
+                                    cols[i].markdown(f"<div class='locked-member'>🔒{display_name}</div>", unsafe_allow_html=True)
                                     continue
                             if cols[i].button(label, key=btn_key, disabled=disabled_state, use_container_width=True):
                                 if on_click == "select_member":
@@ -695,7 +766,9 @@ if clean_df is not None:
             
             st.write("---")
             st.subheader("テキストプレビュー")
-            st.caption("※(△)について、伝助のコメントを確認し、「遅れ」もしくは「早退」に書き換えた上でご利用ください。")
+            st.caption("""下のテキストボックスの右上部分をクリックすることで、テキストをコピーすることができます。
+
+※(△)について、伝助のコメントを確認し、「遅れ」もしくは「早退」に書き換えた上でご利用ください。""")
             text_output = ""
             for _, row in current_df.iterrows():
                 date_str = row['日程']
@@ -734,7 +807,9 @@ if clean_df is not None:
                                 comments_html_lines.append(f"<div>{date_str} {m}：{fmt_comment}</div>")
                 
                 densuke_members = clean_df.columns[1:].tolist()
-                for m in densuke_members:
+                sorted_densuke_members = sort_members_by_roster(densuke_members, st.session_state.roster_df)
+                
+                for m in sorted_densuke_members:
                     if m not in assigned_members_set:
                         if m in cm_data:
                             fmt_comment = format_comment_text(cm_data[m])
