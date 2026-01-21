@@ -16,16 +16,27 @@ st.set_page_config(
     layout="wide"
 )
 
-# ★修正: ブラウザの「翻訳しますか？」を出なくするためのJavascript
-# HTMLのlang属性を'ja'に強制設定します
+# ★翻訳機能を抑制するためのJavaScript
 components.html("""
     <script>
-        const setLang = () => {
-            document.documentElement.setAttribute('lang', 'ja');
-        };
-        setLang();
-        // 念のため定期的に監視して設定（SPA対策）
-        new MutationObserver(setLang).observe(document.documentElement, { attributes: true });
+        function stopTranslation() {
+            try {
+                document.documentElement.lang = 'ja';
+                document.body.classList.add('notranslate');
+                const parentDoc = window.parent.document;
+                parentDoc.documentElement.lang = 'ja';
+                parentDoc.body.classList.add('notranslate');
+                if (!parentDoc.querySelector('meta[name="google"][content="notranslate"]')) {
+                    const meta = parentDoc.createElement('meta');
+                    meta.name = "google";
+                    meta.content = "notranslate";
+                    parentDoc.head.appendChild(meta);
+                }
+            } catch (e) {
+                console.log("翻訳抑制設定の一部が制限されました");
+            }
+        }
+        setInterval(stopTranslation, 1000);
     </script>
 """, height=0, width=0)
 
@@ -34,9 +45,9 @@ components.html("""
 # ==========================================
 st.markdown("""
 <style>
-    /* アプリ全体のプライマリーカラー（メイン色）をアメジスト色に強制統一 */
+    /* アプリ全体のテーマカラーを強制的にアメジスト色(#8e44ad)に上書き */
     :root {
-        --primary-color: #8e44ad;
+        --primary-color: #8e44ad !important;
     }
 
     /* 全体の余白 */
@@ -44,19 +55,17 @@ st.markdown("""
     div[data-testid="stVerticalBlock"] > div { gap: 0rem !important; }
     div[data-testid="column"] { padding: 0px !important; }
     
-    /* --- トグルスイッチの強力な色上書き --- */
-    /* Streamlitのデフォルト(赤)を打ち消す設定 */
-    div[data-testid="stToggle"] label input:checked + div {
-        background-color: #8e44ad !important;
-        border-color: #8e44ad !important;
-        color: #8e44ad !important;
-    }
-    /* トグルのトラック部分 */
+    /* --- トグルスイッチの強制色指定 --- */
     div[data-testid="stToggle"] div[aria-checked="true"] {
         background-color: #8e44ad !important;
+        border-color: #8e44ad !important;
     }
-
-    /* --- ボタン共通スタイル (通常ボタン) --- */
+    div[data-testid="stToggle"] input:checked + div {
+        background-color: #8e44ad !important;
+        border-color: #8e44ad !important;
+    }
+    
+    /* --- ボタン共通スタイル --- */
     .stButton { margin: 0px !important; padding: 0px !important; }
     .stButton button {
         height: 34px !important; min-height: 34px !important;
@@ -71,7 +80,7 @@ st.markdown("""
     
     /* --- 生成ボタン (Primary) --- */
     div.stButton > button[kind="primary"] {
-        background-color: #8e44ad !important; /* アメジスト */
+        background-color: #8e44ad !important;
         border-color: #8e44ad !important;
         color: white !important;
         height: 50px !important;
@@ -84,9 +93,8 @@ st.markdown("""
     }
 
     /* --- ダウンロードボタン (Save) --- */
-    /* テーマカラー(アメジスト)に変更 */
-    div[data-testid="stDownloadButton"] > button {
-        background-color: #8e44ad !important; /* Amethyst */
+    [data-testid="stDownloadButton"] button {
+        background-color: #8e44ad !important;
         border-color: #8e44ad !important;
         color: white !important;
         font-weight: bold !important;
@@ -94,20 +102,16 @@ st.markdown("""
         font-size: 16px !important;
         border-radius: 5px !important;
         box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-        transition: all 0.2s ease-in-out;
     }
-    div[data-testid="stDownloadButton"] > button:hover {
-        background-color: #732d91 !important; /* Darker Amethyst */
+    [data-testid="stDownloadButton"] button:hover {
+        background-color: #732d91 !important;
         border-color: #732d91 !important;
-        transform: translateY(-1px);
-        box-shadow: 0 4px 6px rgba(0,0,0,0.25);
     }
-    div[data-testid="stDownloadButton"] > button:active {
-        transform: translateY(1px);
-        box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    [data-testid="stDownloadButton"] button:active {
+        background-color: #732d91 !important;
     }
 
-    /* --- マーカー判定ルール --- */
+    /* --- マーカー判定ルール (メンバーボタン用) --- */
     button[aria-label*="\u200b\u200b"][aria-label*="(△)"] {
         background-color: #ffc107 !important; border-color: #ffc107 !important; color: black !important;
     }
@@ -149,12 +153,10 @@ st.markdown("""
         line-height: 1.5;
     }
     
-    /* 警告エリアのスタイル */
     .stAlert {
         padding: 0.5rem 1rem !important;
     }
     
-    /* ツールチップボタンの調整 */
     div[data-testid="stPopover"] > button {
         border: none !important;
         background: transparent !important;
@@ -172,7 +174,7 @@ st.markdown("""
 
 # --- 関数定義 ---
 
-def clean_data(raw_df):
+def process_data_with_mapping(raw_df, name_mapping):
     if len(raw_df) > 0:
         first_col = raw_df.iloc[:, 0].astype(str).fillna("")
         comments_data = {}
@@ -183,13 +185,15 @@ def clean_data(raw_df):
             has_comment_row = True
             c_row_idx = comment_rows.index[-1] 
             for col in raw_df.columns[1:]:
+                mapped_col = name_mapping.get(col, col)
                 val = raw_df.at[c_row_idx, col]
                 if pd.notna(val) and str(val).strip() != "":
-                    comments_data[col] = str(val).strip()
+                    comments_data[mapped_col] = str(val).strip()
         
         ignore_keywords = ['最終更新日時', 'コメント']
         mask = ~first_col.apply(lambda x: any(x.startswith(k) for k in ignore_keywords))
         clean_df = raw_df[mask].reset_index(drop=True)
+        clean_df = clean_df.rename(columns=name_mapping)
     else:
         clean_df = raw_df
         comments_data = {}
@@ -301,6 +305,9 @@ def can_member_move(df, current_date, member_name):
 # --- UI部分 ---
 st.title("🍵 お稽古メーカー")
 
+# ★修正: 案内文の配置移動と文言変更
+st.caption("PCもしくはiPadでの操作をお勧めします。スマートフォンの場合は画面を横向きにすると操作しやすいです。")
+
 if 'shift_result' not in st.session_state: st.session_state.shift_result = None
 if 'editing_member' not in st.session_state: st.session_state.editing_member = None 
 if 'editing_date' not in st.session_state: st.session_state.editing_date = None
@@ -308,6 +315,9 @@ if 'roster_df' not in st.session_state: st.session_state.roster_df = None
 if 'comments_data' not in st.session_state: st.session_state.comments_data = {}
 if 'has_comment_row' not in st.session_state: st.session_state.has_comment_row = False
 if 'clean_df' not in st.session_state: st.session_state.clean_df = None
+if 'raw_df' not in st.session_state: st.session_state.raw_df = None 
+if 'name_mappings' not in st.session_state: st.session_state.name_mappings = {} 
+if 'mapping_source_selected' not in st.session_state: st.session_state.mapping_source_selected = None 
 if 'loaded_resume_name' not in st.session_state: st.session_state.loaded_resume_name = None
 if 'confirm_overwrite' not in st.session_state: st.session_state.confirm_overwrite = False
 if 'confirm_reset' not in st.session_state: st.session_state.confirm_reset = False
@@ -348,19 +358,23 @@ if uploaded_roster is not None:
 
 if uploaded_file is not None:
     try:
-        try: raw_df = pd.read_csv(uploaded_file)
-        except UnicodeDecodeError:
-            uploaded_file.seek(0)
-            raw_df = pd.read_csv(uploaded_file, encoding='cp932')
-        clean_df, comments_data, has_comment_row = clean_data(raw_df)
-        st.session_state.clean_df = clean_df
-        st.session_state.comments_data = comments_data
-        st.session_state.has_comment_row = has_comment_row
-        
         if 'last_filename' not in st.session_state or st.session_state.last_filename != uploaded_file.name:
-             st.session_state.last_filename = uploaded_file.name
-             st.session_state.shift_result = None
-             st.rerun()
+            try: raw_df = pd.read_csv(uploaded_file)
+            except UnicodeDecodeError:
+                uploaded_file.seek(0)
+                raw_df = pd.read_csv(uploaded_file, encoding='cp932')
+            
+            st.session_state.raw_df = raw_df
+            st.session_state.name_mappings = {} 
+            
+            clean_df, comments_data, has_comment_row = process_data_with_mapping(raw_df, {})
+            st.session_state.clean_df = clean_df
+            st.session_state.comments_data = comments_data
+            st.session_state.has_comment_row = has_comment_row
+            st.session_state.last_filename = uploaded_file.name
+            st.session_state.shift_result = None
+            st.rerun()
+            
     except Exception as e:
         st.error(f"ファイル読み込みエラー: {e}")
 
@@ -378,6 +392,8 @@ with st.expander("保存したファイルから作業を再開"):
                 st.session_state.settings_df = resume_data.get('settings_df')
                 st.session_state.comments_data = resume_data.get('comments_data', {})
                 st.session_state.has_comment_row = resume_data.get('has_comment_row', False)
+                st.session_state.raw_df = resume_data.get('raw_df', None)
+                st.session_state.name_mappings = resume_data.get('name_mappings', {})
                 st.session_state.loaded_resume_name = uploaded_resume.name
                 st.session_state.confirm_overwrite = False
                 st.session_state.confirm_reset = False
@@ -397,7 +413,6 @@ if clean_df is not None:
     if len(clean_df.columns) < 2:
         st.error("データ形式エラー: 列数が不足しています")
     else:
-        # 変数定義
         members_list = clean_df.columns[1:].tolist()
         dates_list = clean_df.iloc[:, 0].fillna("").astype(str).str.strip().tolist()
         total_members = int(len(members_list))
@@ -427,13 +442,79 @@ if clean_df is not None:
             with st.expander("部員の回答状況を確認する", expanded=True):
                 densuke_members = clean_df.columns[1:].tolist()
                 roster_members_list = [str(n).strip() for n in r_df['氏名'].tolist()]
+                
                 unknown_in_densuke = [m for m in densuke_members if m not in roster_members_list]
+                unanswered_members = [m for m in roster_members_list if m not in densuke_members]
+                
                 if unknown_in_densuke:
                     st.warning(f"⚠️ 【{len(unknown_in_densuke)}名】 **名簿に登録されていない名前が伝助に見つかりました (表記ゆれの可能性があります):**\n\n{', '.join(unknown_in_densuke)}")
-                unanswered_members = [m for m in roster_members_list if m not in densuke_members]
                 if unanswered_members:
                     st.error(f"🚨 【{len(unanswered_members)}名】 **未回答者:**\n\n{', '.join(unanswered_members)}")
+                
+                if unknown_in_densuke and unanswered_members:
+                    st.write("---")
+                    st.markdown("**🔄 表記ゆれの手動修正 (名前の紐付け)**")
+                    st.caption("左側の「伝助の名前」を選択してから、右側の「正しい名前(名簿)」をクリックすると統合されます。")
+                    
+                    if st.session_state.mapping_source_selected:
+                        st.info(f"選択中: **{st.session_state.mapping_source_selected}** → 右側から正しい名前をクリックしてください")
+                    else:
+                        st.write("まずは左側から修正したい名前を選んでください 👇")
+
+                    col_map_L, col_map_R = st.columns(2)
+                    
+                    with col_map_L:
+                        st.markdown("###### 伝助のみに存在 (表記ゆれ?)")
+                        for unk_name in unknown_in_densuke:
+                            label = unk_name
+                            if st.session_state.mapping_source_selected == unk_name:
+                                label += "\u200b"
+                            
+                            if st.button(label, key=f"src_{unk_name}", use_container_width=True):
+                                if st.session_state.mapping_source_selected == unk_name:
+                                    st.session_state.mapping_source_selected = None
+                                else:
+                                    st.session_state.mapping_source_selected = unk_name
+                                st.rerun()
+
+                    with col_map_R:
+                        st.markdown("###### 名簿のみに存在 (未回答)")
+                        for mis_name in unanswered_members:
+                            if st.button(mis_name, key=f"tgt_{mis_name}", use_container_width=True):
+                                if st.session_state.mapping_source_selected:
+                                    src = st.session_state.mapping_source_selected
+                                    st.session_state.name_mappings[src] = mis_name
+                                    st.session_state.mapping_source_selected = None
+                                    
+                                    if st.session_state.raw_df is not None:
+                                        clean_df, comments_data, has_comment_row = process_data_with_mapping(st.session_state.raw_df, st.session_state.name_mappings)
+                                        st.session_state.clean_df = clean_df
+                                        st.session_state.comments_data = comments_data
+                                        st.session_state.has_comment_row = has_comment_row
+                                        st.session_state.shift_result = None 
+                                    st.success(f"{src} を {mis_name} として統合しました")
+                                    st.rerun()
+                
+                if st.session_state.name_mappings:
+                    st.write("---")
+                    st.markdown("**🔗 現在設定されている紐付け**")
+                    cols = st.columns(4)
+                    for i, (old, new) in enumerate(list(st.session_state.name_mappings.items())):
+                        with cols[i % 4]:
+                            st.write(f"{old} ➡ {new}")
+                            if st.button("解除", key=f"del_map_{old}"):
+                                del st.session_state.name_mappings[old]
+                                if st.session_state.raw_df is not None:
+                                    clean_df, comments_data, has_comment_row = process_data_with_mapping(st.session_state.raw_df, st.session_state.name_mappings)
+                                    st.session_state.clean_df = clean_df
+                                    st.session_state.comments_data = comments_data
+                                    st.session_state.has_comment_row = has_comment_row
+                                    st.session_state.shift_result = None
+                                st.rerun()
+
+                st.write("---")
                 status_data = []
+                densuke_members = clean_df.columns[1:].tolist()
                 for _, row in r_df.iterrows():
                     name = str(row.get('氏名', '')).strip()
                     if not name: continue
@@ -509,24 +590,44 @@ if clean_df is not None:
         # 3. 生成結果・編集
         # ------------------------------------------------
         if st.session_state.shift_result is not None:
+            # ★修正: JavaScriptの判定順序を変更 (ダブル -> シングル の順に)
             js_code = """
             <script>
                 function applyColors() {
                     const buttons = window.parent.document.querySelectorAll('button');
                     buttons.forEach(btn => {
                         const text = btn.innerText;
+                        
+                        // 1. 日付ボタン (\u200E を含む場合)
                         if (text.includes('\u200E')) {
-                            if (text.includes('\u200b')) {
+                            // ダブル (\u200b\u200b) = 移動候補 (緑/黄) を *先に* 判定
+                            if (text.includes('\u200b\u200b')) {
+                                if (text.includes('(△)')) {
+                                    btn.style.backgroundColor = '#ffc107'; 
+                                    btn.style.color = 'black'; 
+                                    btn.style.borderColor = '#ffc107';
+                                } else {
+                                    btn.style.backgroundColor = '#28a745'; 
+                                    btn.style.color = 'white'; 
+                                    btn.style.borderColor = '#28a745';
+                                }
+                            } 
+                            // シングル (\u200b) = 選択中 (赤)
+                            else if (text.includes('\u200b')) {
                                 btn.style.backgroundColor = '#ff4b4b'; 
                                 btn.style.color = 'white'; 
                                 btn.style.borderColor = '#ff4b4b';
-                            } else {
+                            } 
+                            // マーカーなし = 通常 (濃いグレー)
+                            else {
                                 btn.style.backgroundColor = '#5D6D7E'; 
                                 btn.style.color = 'white'; 
                                 btn.style.borderColor = '#5D6D7E';
                             }
                             return;
                         }
+
+                        // 2. メンバーボタン: 選択中(キャンセル待ち)
                         if (text.includes('\u200b')) {
                             if (!text.includes('\u200b\u200b')) {
                                 btn.style.backgroundColor = '#ff4b4b'; 
@@ -536,6 +637,8 @@ if clean_df is not None:
                                 return;
                             }
                         } 
+
+                        // 3. メンバーボタン: 交換/移動候補 (緑 or 黄色)
                         if (text.includes('\u200b\u200b')) {
                             if (text.includes('(△)')) {
                                 btn.style.backgroundColor = '#ffc107'; btn.style.color = 'black'; btn.style.borderColor = '#ffc107';
@@ -544,6 +647,8 @@ if clean_df is not None:
                             }
                             return;
                         } 
+
+                        // 4. それ以外のボタン (デフォルトに戻す)
                         if (!text.includes('生成') && !text.includes('解除') && !text.includes('保存') && !text.includes('リセット') && !text.includes('はい') && !text.includes('いいえ') && !text.includes('キャンセル') && !text.includes('CSV') && !text.includes('名簿') && !text.includes('バックアップ')) {
                              btn.style.backgroundColor = ''; btn.style.color = ''; btn.style.borderColor = '';
                         }
