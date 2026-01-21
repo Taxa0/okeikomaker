@@ -2,12 +2,16 @@ import streamlit as st
 import pandas as pd
 import pulp
 import streamlit.components.v1 as components
+import html as html_lib
+import pickle
+import io
+from datetime import datetime
 
 # ページ設定
 st.set_page_config(page_title="🍵 お稽古メーカー", layout="wide")
 
 # ==========================================
-# CSS設定 (ボタンデザイン・色制御)
+# CSS設定
 # ==========================================
 st.markdown("""
 <style>
@@ -29,13 +33,9 @@ st.markdown("""
         width: 100%; text-align: center; margin: 0px;
     }
     
-    /* ---------------------------------------------------
-       特別なボタンの色設定
-       --------------------------------------------------- */
-    
     /* 生成ボタン (Primary) */
     div.stButton > button[kind="primary"] {
-        background-color: #8e44ad !important; /* アメジスト色 */
+        background-color: #8e44ad !important;
         border-color: #8e44ad !important;
         color: white !important;
         height: 50px !important;
@@ -43,63 +43,35 @@ st.markdown("""
         box-shadow: 0 2px 5px rgba(0,0,0,0.2);
     }
     div.stButton > button[kind="primary"]:hover {
-        background-color: #732d91 !important; /* 少し濃い紫 */
+        background-color: #732d91 !important;
         border-color: #732d91 !important;
     }
 
-    /* ---------------------------------------------------
-       カラーリングルール (マーカー判定)
-       --------------------------------------------------- */
-
-    /* 1. 移動可能 (緑/黄) */
+    /* マーカー判定ルール */
     button[aria-label*="\u200b\u200b"][aria-label*="(△)"] {
-        background-color: #ffc107 !important;
-        border-color: #ffc107 !important;
-        color: black !important;
+        background-color: #ffc107 !important; border-color: #ffc107 !important; color: black !important;
     }
-    button[aria-label*="\u200b\u200b"][aria-label*="(△)"]:hover {
-        background-color: #e0a800 !important;
-    }
+    button[aria-label*="\u200b\u200b"][aria-label*="(△)"]:hover { background-color: #e0a800 !important; }
+
     button[aria-label*="\u200b\u200b"]:not([aria-label*="(△)"]) {
-        background-color: #28a745 !important;
-        border-color: #28a745 !important;
-        color: white !important;
+        background-color: #28a745 !important; border-color: #28a745 !important; color: white !important;
     }
-    button[aria-label*="\u200b\u200b"]:not([aria-label*="(△)"]):hover {
-        background-color: #218838 !important;
-    }
+    button[aria-label*="\u200b\u200b"]:not([aria-label*="(△)"]):hover { background-color: #218838 !important; }
 
-    /* 2. 選択中 (赤) */
     button[aria-label*="\u200b"]:not([aria-label*="\u200b\u200b"]) {
-        background-color: #ff4b4b !important;
-        border-color: #ff4b4b !important;
-        color: white !important;
-        opacity: 1.0 !important;
+        background-color: #ff4b4b !important; border-color: #ff4b4b !important; color: white !important; opacity: 1.0 !important;
     }
-    button[aria-label*="\u200b"]:not([aria-label*="\u200b\u200b"]):hover {
-        background-color: #ff3333 !important;
-    }
-    button[aria-label*="\u200b"]:disabled {
-        color: white !important;
-    }
+    button[aria-label*="\u200b"]:not([aria-label*="\u200b\u200b"]):hover { background-color: #ff3333 !important; }
+    button[aria-label*="\u200b"]:disabled { color: white !important; }
 
-    /* 3. 日程ボタン (紺) */
     div[data-testid="column"]:nth-of-type(1) div.stButton button:not([aria-label*="\u200b"]) {
-        background-color: #2c3e50 !important;
-        border-color: #2c3e50 !important;
-        color: white !important;
+        background-color: #2c3e50 !important; border-color: #2c3e50 !important; color: white !important;
     }
-    div[data-testid="column"]:nth-of-type(1) div.stButton button:not([aria-label*="\u200b"]):hover {
-        background-color: #1a252f !important;
-    }
+    div[data-testid="column"]:nth-of-type(1) div.stButton button:not([aria-label*="\u200b"]):hover { background-color: #1a252f !important; }
     div[data-testid="column"]:nth-of-type(1) div.stButton button:disabled {
-        background-color: #2c3e50 !important;
-        border-color: #2c3e50 !important;
-        color: rgba(255, 255, 255, 0.5) !important;
-        opacity: 1.0 !important;
+        background-color: #2c3e50 !important; border-color: #2c3e50 !important; color: rgba(255, 255, 255, 0.5) !important; opacity: 1.0 !important;
     }
 
-    /* ロックされた部員 (グレー) */
     .locked-member {
         display: flex; align-items: center; justify-content: center;
         width: 100%; height: 34px; background-color: #e9ecef; color: #adb5bd;
@@ -107,40 +79,44 @@ st.markdown("""
         font-size: 13px; font-weight: bold; margin-bottom: 2px;
         white-space: nowrap; overflow: hidden; box-sizing: border-box; cursor: not-allowed;
     }
+    
+    .comment-container {
+        height: 300px;
+        overflow-y: auto;
+        border: 1px solid rgba(49, 51, 63, 0.2);
+        border-radius: 0.25rem;
+        padding: 10px;
+        background-color: transparent;
+        font-size: 14px;
+        line-height: 1.5;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # --- 関数定義 ---
 
 def clean_data(raw_df):
-    comments_data = {}
-    has_comment_row = False
-    
     if len(raw_df) > 0:
         first_col = raw_df.iloc[:, 0].astype(str).fillna("")
-        
-        # ★コメント行の抽出
-        # 通常、伝助のコメント行は一番左の列が「コメント」になっている
+        comments_data = {}
+        has_comment_row = False
         comment_rows = raw_df[first_col.str.contains('コメント', na=False)]
         
         if not comment_rows.empty:
             has_comment_row = True
-            # 最後の行がコメント行である可能性が高いが、検索でヒットした最初の行を使用
             c_row_idx = comment_rows.index[-1] 
-            
-            # 各列（部員）のコメントを取得
-            # 列1以降が部員データと仮定
             for col in raw_df.columns[1:]:
                 val = raw_df.at[c_row_idx, col]
                 if pd.notna(val) and str(val).strip() != "":
                     comments_data[col] = str(val).strip()
         
-        # データのクリーニング（コメント行や更新日時行を除外）
         ignore_keywords = ['最終更新日時', 'コメント']
         mask = ~first_col.apply(lambda x: any(x.startswith(k) for k in ignore_keywords))
         clean_df = raw_df[mask].reset_index(drop=True)
     else:
         clean_df = raw_df
+        comments_data = {}
+        has_comment_row = False
         
     if len(clean_df.columns) > 0 and "Unnamed" in str(clean_df.columns[0]):
         clean_df.rename(columns={clean_df.columns[0]: '日程'}, inplace=True)
@@ -157,6 +133,16 @@ def sort_members_by_roster(member_list, roster_df):
     def get_rank(name): return rank_map.get(name, 999999)
     member_list.sort(key=get_rank)
     return member_list
+
+def format_comment_text(text):
+    if not text: return ""
+    safe_text = html_lib.escape(text)
+    style_late = "background-color: rgba(255, 75, 75, 0.15); color: #ff4b4b; font-weight: bold; padding: 2px 4px; border-radius: 4px; border: 1px solid rgba(255, 75, 75, 0.5);"
+    style_early = "background-color: rgba(33, 150, 243, 0.15); color: #2196f3; font-weight: bold; padding: 2px 4px; border-radius: 4px; border: 1px solid rgba(33, 150, 243, 0.5);"
+    safe_text = safe_text.replace("遅れ", f"<span style='{style_late}'>遅れ</span>")
+    safe_text = safe_text.replace("遅刻", f"<span style='{style_late}'>遅刻</span>")
+    safe_text = safe_text.replace("早退", f"<span style='{style_early}'>早退</span>")
+    return safe_text
 
 def solve_shift_schedule(df, min_list, max_list, roster_df=None):
     dates = df.iloc[:, 0].fillna("").astype(str).str.strip().tolist()
@@ -183,16 +169,12 @@ def solve_shift_schedule(df, min_list, max_list, roster_df=None):
             else: prob += x[d_idx, m_idx] == 0
             preference_scores[(d_idx, m_idx)] = score
             
-    # ペナルティ項 (学年重複)
     penalty_term = 0
     if roster_df is not None and '学年' in roster_df.columns:
         member_grade_map = {str(row['氏名']).strip(): str(row['学年']).strip() for _, row in roster_df.iterrows()}
-        unique_grades = set(member_grade_map.values())
-        unique_grades = {g for g in unique_grades if g and g.lower() != 'nan'}
+        unique_grades = {g for g in set(member_grade_map.values()) if g and g.lower() != 'nan'}
         
-        excess = pulp.LpVariable.dicts("excess", 
-                                       ((d, g) for d in range(len(dates)) for g in unique_grades),
-                                       lowBound=0, cat='Integer')
+        excess = pulp.LpVariable.dicts("excess", ((d, g) for d in range(len(dates)) for g in unique_grades), lowBound=0, cat='Integer')
         for d in range(len(dates)):
             for g in unique_grades:
                 grade_member_indices = [i for i, m in enumerate(members) if member_grade_map.get(m) == g]
@@ -200,11 +182,9 @@ def solve_shift_schedule(df, min_list, max_list, roster_df=None):
                     prob += pulp.lpSum([x[d, i] for i in grade_member_indices]) <= 1 + excess[d, g]
         penalty_term = pulp.lpSum([excess[d, g] for d in range(len(dates)) for g in unique_grades]) * 10
 
-    # 目的関数
     base_score = pulp.lpSum([x[d, m] * preference_scores[(d, m)] for d in range(len(dates)) for m in range(len(members))])
     prob += base_score - penalty_term
     
-    # 参加者は必ず1回
     for m_idx in range(len(members)):
         if m_idx in active_members_indices:
             prob += pulp.lpSum([x[d, m_idx] for d in range(len(dates))]) == 1
@@ -250,47 +230,75 @@ if 'editing_date' not in st.session_state: st.session_state.editing_date = None
 if 'roster_df' not in st.session_state: st.session_state.roster_df = None
 if 'comments_data' not in st.session_state: st.session_state.comments_data = {}
 if 'has_comment_row' not in st.session_state: st.session_state.has_comment_row = False
+if 'clean_df' not in st.session_state: st.session_state.clean_df = None # ★追加: clean_dfもセッション管理
 
-# --- 手順1 ---
+# --- 手順1 (読み込み) ---
 st.markdown("### 1. 伝助からCSVファイルをダウンロードし、以下にアップロードする")
-uploaded_file = st.file_uploader("CSVファイル", type=['csv'], label_visibility="collapsed")
 
-st.markdown("**(任意) 部員名簿CSVをアップロード**")
-st.caption("一行目: `氏名,学年` | 二行目以降: `名前,1` の形式")
-uploaded_roster = st.file_uploader("部員名簿", type=['csv'], label_visibility="collapsed", key="roster")
+# 一時保存ファイルの読み込み
+uploaded_resume = st.file_uploader("📂 **作業を再開する** (一時保存ファイル .okeiko)", type=['okeiko'], key="resume_uploader")
 
-clean_df = None
-
-if uploaded_roster is not None:
+if uploaded_resume is not None:
     try:
-        try: roster_df = pd.read_csv(uploaded_roster)
-        except UnicodeDecodeError:
-            uploaded_roster.seek(0)
-            roster_df = pd.read_csv(uploaded_roster, encoding='cp932')
-        if '氏名' not in roster_df.columns:
-            st.error("名簿CSVに「氏名」という列が見つかりません。")
-        else:
-            st.session_state.roster_df = roster_df
-    except Exception as e:
-        st.error(f"名簿読み込みエラー: {e}")
-
-if uploaded_file is not None:
-    try:
-        try: raw_df = pd.read_csv(uploaded_file)
-        except UnicodeDecodeError:
-            uploaded_file.seek(0)
-            raw_df = pd.read_csv(uploaded_file, encoding='cp932')
-        # ★修正: コメントデータも受け取る
-        clean_df, comments_data, has_comment_row = clean_data(raw_df)
-        st.session_state.comments_data = comments_data
-        st.session_state.has_comment_row = has_comment_row
+        # ★修正: ポインタをリセットしてから読み込む
+        uploaded_resume.seek(0)
+        resume_data = pickle.load(uploaded_resume)
         
-        if 'last_filename' not in st.session_state or st.session_state.last_filename != uploaded_file.name:
-             st.session_state.last_filename = uploaded_file.name
-             st.session_state.shift_result = None
-             st.rerun()
+        # ★修正: セッションステートに確実にセット
+        st.session_state.clean_df = resume_data.get('clean_df')
+        st.session_state.roster_df = resume_data.get('roster_df')
+        st.session_state.shift_result = resume_data.get('shift_result')
+        st.session_state.settings_df = resume_data.get('settings_df')
+        st.session_state.comments_data = resume_data.get('comments_data', {})
+        st.session_state.has_comment_row = resume_data.get('has_comment_row', False)
+        st.success("作業データを復元しました。下へスクロールして編集を続けてください。")
     except Exception as e:
         st.error(f"ファイル読み込みエラー: {e}")
+
+# 新規アップロード (データがない場合、または上書き用)
+# もし resume がなくて clean_df もないなら表示
+if st.session_state.clean_df is None:
+    uploaded_file = st.file_uploader("CSVファイル (新規作成)", type=['csv'], label_visibility="collapsed")
+    st.markdown("**(任意) 部員名簿CSVをアップロード**")
+    st.caption("一行目: `氏名,学年` | 二行目以降: `名前,1` の形式")
+    uploaded_roster = st.file_uploader("部員名簿", type=['csv'], label_visibility="collapsed", key="roster")
+
+    if uploaded_roster is not None:
+        try:
+            try: roster_df = pd.read_csv(uploaded_roster)
+            except UnicodeDecodeError:
+                uploaded_roster.seek(0)
+                roster_df = pd.read_csv(uploaded_roster, encoding='cp932')
+            if '氏名' not in roster_df.columns:
+                st.error("名簿CSVに「氏名」という列が見つかりません。")
+            else:
+                st.session_state.roster_df = roster_df
+        except Exception as e:
+            st.error(f"名簿読み込みエラー: {e}")
+
+    if uploaded_file is not None:
+        try:
+            try: raw_df = pd.read_csv(uploaded_file)
+            except UnicodeDecodeError:
+                uploaded_file.seek(0)
+                raw_df = pd.read_csv(uploaded_file, encoding='cp932')
+            
+            c_df, comments_data, has_comment_row = clean_data(raw_df)
+            
+            # ★修正: セッションステートに保存
+            st.session_state.clean_df = c_df
+            st.session_state.comments_data = comments_data
+            st.session_state.has_comment_row = has_comment_row
+            
+            if 'last_filename' not in st.session_state or st.session_state.last_filename != uploaded_file.name:
+                 st.session_state.last_filename = uploaded_file.name
+                 st.session_state.shift_result = None
+                 st.rerun()
+        except Exception as e:
+            st.error(f"ファイル読み込みエラー: {e}")
+
+# メイン処理にはセッションステートのデータを使用
+clean_df = st.session_state.clean_df
 
 if clean_df is not None:
     if len(clean_df.columns) < 2:
@@ -318,7 +326,8 @@ if clean_df is not None:
         # --- 手順2 ---
         st.write(""); st.write("---")
         st.markdown("### 2. お稽古の人数を設定する")
-        st.info(f"出席可能者: **{num_attendees} / {total_members} 名** (全{total_days}日程)")
+        
+        st.info(f"参加者: **{num_attendees} / {total_members} 名** (全{total_days}日程)")
         
         if st.session_state.roster_df is not None:
             r_df = st.session_state.roster_df
@@ -327,10 +336,10 @@ if clean_df is not None:
                 roster_members_list = [str(n).strip() for n in r_df['氏名'].tolist()]
                 unknown_in_densuke = [m for m in densuke_members if m not in roster_members_list]
                 if unknown_in_densuke:
-                    st.warning(f"⚠️ **名簿に登録されていない名前が伝助に見つかりました ({len(unknown_in_densuke)}名 / 表記ゆれの可能性があります):**\n\n{', '.join(unknown_in_densuke)}")
+                    st.warning(f"⚠️ 【{len(unknown_in_densuke)}名】 **名簿に登録されていない名前が伝助に見つかりました (表記ゆれの可能性があります):**\n\n{', '.join(unknown_in_densuke)}")
                 unanswered_members = [m for m in roster_members_list if m not in densuke_members]
                 if unanswered_members:
-                    st.error(f"🚨 **未回答者 ({len(unanswered_members)}名):**\n\n{', '.join(unanswered_members)}")
+                    st.error(f"🚨 【{len(unanswered_members)}名】 **未回答者:**\n\n{', '.join(unanswered_members)}")
                 status_data = []
                 for _, row in r_df.iterrows():
                     name = str(row.get('氏名', '')).strip()
@@ -396,7 +405,7 @@ if clean_df is not None:
                             btn.style.backgroundColor = '#ff4b4b'; btn.style.color = 'white'; btn.style.borderColor = '#ff4b4b'; btn.style.opacity = '1.0';
                             return;
                         } 
-                        if (!text.includes('生成') && !text.includes('解除')) {
+                        if (!text.includes('生成') && !text.includes('解除') && !text.includes('保存')) {
                              btn.style.backgroundColor = ''; btn.style.color = ''; btn.style.borderColor = '';
                         }
                     });
@@ -435,7 +444,8 @@ if clean_df is not None:
             st.caption("PCもしくはiPadでの編集をお勧めします。スマートフォンの場合は画面を横向きにしてください。")
             st.write("")
 
-            current_df = st.session_state.shift_result
+            # ★修正: 現在のデータをコピーして操作する (参照切れ防止)
+            current_df = st.session_state.shift_result.copy()
             date_to_row = {row['日程']: idx for idx, row in current_df.iterrows()}
             max_people_in_day = 0
             for _, row in current_df.iterrows():
@@ -494,6 +504,8 @@ if clean_df is not None:
                             list_curr = sort_members_by_roster(list_curr, st.session_state.roster_df)
                             current_df.at[row_idx_curr, "担当者"] = ", ".join(list_curr)
                             current_df.at[row_idx_curr, "人数"] = len(list_curr)
+                            
+                            # ★修正: 更新したDFをセッションに保存
                             st.session_state.shift_result = current_df
                             st.session_state.editing_member = None
                             st.rerun()
@@ -593,7 +605,6 @@ if clean_df is not None:
                                     st.session_state.editing_date = None
                                     st.rerun()
             
-            # --- テキストプレビュー ---
             st.write("---")
             st.markdown("#### テキストプレビュー (コピー用)")
             st.caption("※(△)について、伝助のコメントを確認し、「遅れ」もしくは「早退」に書き換えた上でご利用ください。")
@@ -608,24 +619,19 @@ if clean_df is not None:
                         status = get_status(clean_df, date_str, member)
                         if status == "△": formatted_members.append(f"{member}(△)")
                         else: formatted_members.append(member)
-                    
                     members_str_jp = "、".join(formatted_members)
                     text_output += f"{date_str}{members_str_jp}\n"
             
             st.text_area("以下のテキストをコピーして使用してください", text_output, height=300, label_visibility="collapsed")
 
-            # --- ★追加機能: 伝助コメント欄 ---
             st.write("---")
             st.subheader("伝助コメント欄")
             
             if not st.session_state.has_comment_row:
                 st.warning("※ 伝助のCSVファイルにコメントの行が存在しませんでした")
             else:
-                comments_text = ""
+                comments_html_lines = []
                 cm_data = st.session_state.comments_data
-                
-                # 1. お稽古の日程順 (決定者)
-                # 全ての割り当て済みメンバーをセットで管理して、後で除外に使用
                 assigned_members_set = set()
                 
                 for _, row in current_df.iterrows():
@@ -636,31 +642,47 @@ if clean_df is not None:
                         for m in member_list:
                             assigned_members_set.add(m)
                             if m in cm_data:
-                                comments_text += f"{date_str} {m}：{cm_data[m]}\n"
+                                fmt_comment = format_comment_text(cm_data[m])
+                                comments_html_lines.append(f"<div>{date_str} {m}：{fmt_comment}</div>")
                 
-                # 名簿情報の準備
                 densuke_members = clean_df.columns[1:].tolist()
                 roster_members = []
                 if st.session_state.roster_df is not None:
                     roster_members = [str(n).strip() for n in st.session_state.roster_df['氏名'].tolist()]
                 
-                # 2. 表記ゆれ (伝助にいるが名簿にいない & 未決定)
-                # もし名簿がない場合は全員「名簿にいない」扱いになるが、仕様上「名簿アップロード時」の挙動を想定
-                # 名簿がない場合は roster_members は空なので、全員 unknown になる
                 unknown_in_densuke = [m for m in densuke_members if m not in roster_members]
-                
                 for m in unknown_in_densuke:
                     if m not in assigned_members_set and m in cm_data:
-                        comments_text += f"(表記ゆれ) {m}：{cm_data[m]}\n"
+                        fmt_comment = format_comment_text(cm_data[m])
+                        comments_html_lines.append(f"<div>(表記ゆれ) {m}：{fmt_comment}</div>")
                 
-                # 3. 不参加 (名簿にいるが未決定)
-                # 名簿がない場合は roster_members が空なのでここは出力されない (正しい)
-                # 名簿がある場合、未決定者 (かつ伝助にデータがある人 = コメントがある可能性がある人)
                 for m in roster_members:
                     if m in densuke_members and m not in assigned_members_set and m in cm_data:
-                        comments_text += f"(不参加) {m}：{cm_data[m]}\n"
+                        fmt_comment = format_comment_text(cm_data[m])
+                        comments_html_lines.append(f"<div style='color: #808080;'>(不参加) {m}：{fmt_comment}</div>")
                 
-                if comments_text:
-                    st.text_area("コメント一覧", comments_text, height=300, label_visibility="collapsed")
+                if comments_html_lines:
+                    full_html = "".join(comments_html_lines)
+                    st.markdown(f'<div class="comment-container">{full_html}</div>', unsafe_allow_html=True)
                 else:
                     st.info("表示すべきコメントはありません")
+            
+            st.write("")
+            st.write("")
+            save_data = {
+                'clean_df': st.session_state.clean_df, # ★修正: セッションから保存
+                'roster_df': st.session_state.roster_df,
+                'shift_result': st.session_state.shift_result,
+                'settings_df': st.session_state.settings_df,
+                'comments_data': st.session_state.comments_data,
+                'has_comment_row': st.session_state.has_comment_row
+            }
+            buffer = io.BytesIO()
+            pickle.dump(save_data, buffer)
+            
+            today_str = datetime.now().strftime('%Y%m%d')
+            file_name = f"{today_str}_backup.okeiko"
+            
+            col_dl_L, col_dl_R = st.columns([3, 1])
+            with col_dl_R:
+                st.download_button("💾 作業を一時保存する", data=buffer, file_name=file_name, mime="application/octet-stream", use_container_width=True)
