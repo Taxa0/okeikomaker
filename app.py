@@ -7,8 +7,14 @@ import pickle
 import io
 from datetime import datetime
 
-# ページ設定
-st.set_page_config(page_title="🍵 お稽古メーカー", layout="wide")
+# ==========================================
+# ページ設定 (アイコンはここで変更できます)
+# ==========================================
+st.set_page_config(
+    page_title="お稽古メーカー", 
+    page_icon="🍵", 
+    layout="wide"
+)
 
 # ==========================================
 # CSS設定
@@ -20,7 +26,7 @@ st.markdown("""
     div[data-testid="stVerticalBlock"] > div { gap: 0rem !important; }
     div[data-testid="column"] { padding: 0px !important; }
     
-    /* ボタン共通スタイル */
+    /* --- ボタン共通スタイル (通常ボタン) --- */
     .stButton { margin: 0px !important; padding: 0px !important; }
     .stButton button {
         height: 34px !important; min-height: 34px !important;
@@ -33,9 +39,9 @@ st.markdown("""
         width: 100%; text-align: center; margin: 0px;
     }
     
-    /* 生成ボタン (Primary) */
+    /* --- 生成ボタン (Primary) --- */
     div.stButton > button[kind="primary"] {
-        background-color: #8e44ad !important;
+        background-color: #8e44ad !important; /* アメジスト */
         border-color: #8e44ad !important;
         color: white !important;
         height: 50px !important;
@@ -47,7 +53,31 @@ st.markdown("""
         border-color: #732d91 !important;
     }
 
-    /* マーカー判定ルール */
+    /* --- ダウンロードボタン (Save) --- */
+    /* 保存ボタンらしい青色にし、目立たせる */
+    div[data-testid="stDownloadButton"] > button {
+        background-color: #2980b9 !important; /* Save Blue */
+        border-color: #2980b9 !important;
+        color: white !important;
+        font-weight: bold !important;
+        height: 45px !important; /* 少し高さを出す */
+        font-size: 16px !important;
+        border-radius: 5px !important;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        transition: all 0.2s ease-in-out;
+    }
+    div[data-testid="stDownloadButton"] > button:hover {
+        background-color: #1f618d !important; /* Darker Blue */
+        border-color: #1f618d !important;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 6px rgba(0,0,0,0.25);
+    }
+    div[data-testid="stDownloadButton"] > button:active {
+        transform: translateY(1px);
+        box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    }
+
+    /* --- マーカー判定ルール --- */
     button[aria-label*="\u200b\u200b"][aria-label*="(△)"] {
         background-color: #ffc107 !important; border-color: #ffc107 !important; color: black !important;
     }
@@ -81,14 +111,31 @@ st.markdown("""
     }
     
     .comment-container {
-        height: 300px;
-        overflow-y: auto;
         border: 1px solid rgba(49, 51, 63, 0.2);
         border-radius: 0.25rem;
         padding: 10px;
         background-color: transparent;
         font-size: 14px;
         line-height: 1.5;
+    }
+    
+    /* 警告エリアのスタイル */
+    .stAlert {
+        padding: 0.5rem 1rem !important;
+    }
+    
+    /* ツールチップボタンの調整 */
+    div[data-testid="stPopover"] > button {
+        border: none !important;
+        background: transparent !important;
+        color: #8e44ad !important;
+        font-size: 1.2rem !important;
+        padding: 0px !important;
+        min-height: 0px !important;
+        height: auto !important;
+    }
+    div[data-testid="stPopover"] > button:hover {
+        color: #732d91 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -230,80 +277,90 @@ if 'editing_date' not in st.session_state: st.session_state.editing_date = None
 if 'roster_df' not in st.session_state: st.session_state.roster_df = None
 if 'comments_data' not in st.session_state: st.session_state.comments_data = {}
 if 'has_comment_row' not in st.session_state: st.session_state.has_comment_row = False
-if 'clean_df' not in st.session_state: st.session_state.clean_df = None # ★追加: clean_dfもセッション管理
+if 'clean_df' not in st.session_state: st.session_state.clean_df = None
+if 'loaded_resume_name' not in st.session_state: st.session_state.loaded_resume_name = None
+if 'confirm_overwrite' not in st.session_state: st.session_state.confirm_overwrite = False
+if 'confirm_reset' not in st.session_state: st.session_state.confirm_reset = False
 
 # --- 手順1 (読み込み) ---
-st.markdown("### 1. 伝助からCSVファイルをダウンロードし、以下にアップロードする")
+st.markdown("### 1. ファイルアップロード")
 
-# 一時保存ファイルの読み込み
-uploaded_resume = st.file_uploader("📂 **作業を再開する** (一時保存ファイル .okeiko)", type=['okeiko'], key="resume_uploader")
+help_text_densuke = """
+伝助のCSVファイルのダウンロード方法:
+1. 伝助のページの下の方にある「CSV形式でデータを出力する」をクリックする
+2. コメントの「出力する」にチェックを入れ、「CSV形式で登録データを出力する」をクリックする
+3. 「CSVデータを取得する」をクリックするとダウンロードができる
+"""
+uploaded_file = st.file_uploader("**伝助のCSVファイルをアップロード**", type=['csv'], help=help_text_densuke)
 
-if uploaded_resume is not None:
+help_text_roster = "一行目: 氏名,学年 | 二行目以降: 名前,1 の形式"
+uploaded_roster = st.file_uploader("**(任意) 部員名簿CSVファイルをアップロード**", type=['csv'], key="roster", help=help_text_roster)
+
+if uploaded_roster is not None:
     try:
-        # ★修正: ポインタをリセットしてから読み込む
-        uploaded_resume.seek(0)
-        resume_data = pickle.load(uploaded_resume)
+        try: roster_df = pd.read_csv(uploaded_roster)
+        except UnicodeDecodeError:
+            uploaded_roster.seek(0)
+            roster_df = pd.read_csv(uploaded_roster, encoding='cp932')
+        if '氏名' not in roster_df.columns:
+            st.error("名簿CSVに「氏名」という列が見つかりません。")
+        else:
+            st.session_state.roster_df = roster_df
+    except Exception as e:
+        st.error(f"名簿読み込みエラー: {e}")
+
+if uploaded_file is not None:
+    try:
+        try: raw_df = pd.read_csv(uploaded_file)
+        except UnicodeDecodeError:
+            uploaded_file.seek(0)
+            raw_df = pd.read_csv(uploaded_file, encoding='cp932')
+        clean_df, comments_data, has_comment_row = clean_data(raw_df)
+        st.session_state.clean_df = clean_df
+        st.session_state.comments_data = comments_data
+        st.session_state.has_comment_row = has_comment_row
         
-        # ★修正: セッションステートに確実にセット
-        st.session_state.clean_df = resume_data.get('clean_df')
-        st.session_state.roster_df = resume_data.get('roster_df')
-        st.session_state.shift_result = resume_data.get('shift_result')
-        st.session_state.settings_df = resume_data.get('settings_df')
-        st.session_state.comments_data = resume_data.get('comments_data', {})
-        st.session_state.has_comment_row = resume_data.get('has_comment_row', False)
-        st.success("作業データを復元しました。下へスクロールして編集を続けてください。")
+        if 'last_filename' not in st.session_state or st.session_state.last_filename != uploaded_file.name:
+             st.session_state.last_filename = uploaded_file.name
+             st.session_state.shift_result = None
+             st.rerun()
     except Exception as e:
         st.error(f"ファイル読み込みエラー: {e}")
 
-# 新規アップロード (データがない場合、または上書き用)
-# もし resume がなくて clean_df もないなら表示
-if st.session_state.clean_df is None:
-    uploaded_file = st.file_uploader("CSVファイル (新規作成)", type=['csv'], label_visibility="collapsed")
-    st.markdown("**(任意) 部員名簿CSVをアップロード**")
-    st.caption("一行目: `氏名,学年` | 二行目以降: `名前,1` の形式")
-    uploaded_roster = st.file_uploader("部員名簿", type=['csv'], label_visibility="collapsed", key="roster")
+st.write("")
+with st.expander("📂 保存したファイルから作業を再開"):
+    uploaded_resume = st.file_uploader("**バックアップファイル (.okeiko)をアップロード**", type=['okeiko'], key="resume_uploader")
+    if uploaded_resume is not None:
+        if st.session_state.loaded_resume_name != uploaded_resume.name:
+            try:
+                uploaded_resume.seek(0)
+                resume_data = pickle.load(uploaded_resume)
+                st.session_state.clean_df = resume_data.get('clean_df')
+                st.session_state.roster_df = resume_data.get('roster_df')
+                st.session_state.shift_result = resume_data.get('shift_result')
+                st.session_state.settings_df = resume_data.get('settings_df')
+                st.session_state.comments_data = resume_data.get('comments_data', {})
+                st.session_state.has_comment_row = resume_data.get('has_comment_row', False)
+                st.session_state.loaded_resume_name = uploaded_resume.name
+                st.session_state.confirm_overwrite = False
+                st.session_state.confirm_reset = False
+                st.success("作業データを復元しました。下へスクロールして編集を続けてください。")
+                st.rerun()
+            except Exception as e:
+                st.error(f"ファイル読み込みエラー: {e}")
+    else:
+        st.session_state.loaded_resume_name = None
 
-    if uploaded_roster is not None:
-        try:
-            try: roster_df = pd.read_csv(uploaded_roster)
-            except UnicodeDecodeError:
-                uploaded_roster.seek(0)
-                roster_df = pd.read_csv(uploaded_roster, encoding='cp932')
-            if '氏名' not in roster_df.columns:
-                st.error("名簿CSVに「氏名」という列が見つかりません。")
-            else:
-                st.session_state.roster_df = roster_df
-        except Exception as e:
-            st.error(f"名簿読み込みエラー: {e}")
-
-    if uploaded_file is not None:
-        try:
-            try: raw_df = pd.read_csv(uploaded_file)
-            except UnicodeDecodeError:
-                uploaded_file.seek(0)
-                raw_df = pd.read_csv(uploaded_file, encoding='cp932')
-            
-            c_df, comments_data, has_comment_row = clean_data(raw_df)
-            
-            # ★修正: セッションステートに保存
-            st.session_state.clean_df = c_df
-            st.session_state.comments_data = comments_data
-            st.session_state.has_comment_row = has_comment_row
-            
-            if 'last_filename' not in st.session_state or st.session_state.last_filename != uploaded_file.name:
-                 st.session_state.last_filename = uploaded_file.name
-                 st.session_state.shift_result = None
-                 st.rerun()
-        except Exception as e:
-            st.error(f"ファイル読み込みエラー: {e}")
-
-# メイン処理にはセッションステートのデータを使用
 clean_df = st.session_state.clean_df
 
+# ==========================================
+# メイン処理
+# ==========================================
 if clean_df is not None:
     if len(clean_df.columns) < 2:
-            st.error("データ形式エラー: 列数が不足しています")
+        st.error("データ形式エラー: 列数が不足しています")
     else:
+        # 変数定義
         members_list = clean_df.columns[1:].tolist()
         dates_list = clean_df.iloc[:, 0].fillna("").astype(str).str.strip().tolist()
         total_members = int(len(members_list))
@@ -323,9 +380,8 @@ if clean_df is not None:
         default_bulk_max = min(default_bulk_max, safe_input_max)
         default_bulk_min = min(default_bulk_min, safe_input_max)
 
-        # --- 手順2 ---
         st.write(""); st.write("---")
-        st.markdown("### 2. お稽古の人数を設定する")
+        st.markdown("### 2. お稽古の人数を設定")
         
         st.info(f"参加者: **{num_attendees} / {total_members} 名** (全{total_days}日程)")
         
@@ -353,7 +409,7 @@ if clean_df is not None:
                 if status_data:
                     st.dataframe(pd.DataFrame(status_data), hide_index=True, use_container_width=True)
 
-        if 'settings_df' not in st.session_state or len(st.session_state.settings_df) != total_days:
+        if st.session_state.get('settings_df') is None or len(st.session_state.settings_df) != total_days:
             st.session_state.settings_df = pd.DataFrame({
                 "日程": dates_list, 
                 "最小人数": [default_bulk_min] * len(dates_list), 
@@ -372,20 +428,49 @@ if clean_df is not None:
 
         edited_settings = st.data_editor(st.session_state.settings_df, hide_index=True, width='stretch', height=200)
 
-        if st.button("🔮 お稽古生成 🔮", type="primary", use_container_width=True):
-            min_l = edited_settings["最小人数"].fillna(0).astype(int).tolist()
-            max_l = edited_settings["最大人数"].fillna(1).astype(int).tolist()
-            if sum(min_l) > num_attendees: st.warning("※ 設定された最小人数の合計が、出席可能者数を超えています。")
-            with st.spinner('計算中...'):
-                res, success = solve_shift_schedule(clean_df, min_l, max_l, st.session_state.roster_df)
-            if success:
-                st.session_state.shift_result = res
-                st.session_state.editing_member = None
-                st.session_state.editing_date = None
-                st.rerun()
-            else: st.error("お稽古を作成できませんでした。参加希望者全員を1回ずつ割り当てるための枠が足りないか、日程の都合がつきません。人数の上限を増やすなど条件を見直してください。")
+        generate_clicked = st.button("🔮 お稽古生成 🔮", type="primary", use_container_width=True)
+        
+        if generate_clicked:
+            if st.session_state.shift_result is not None:
+                st.session_state.confirm_overwrite = True
+            else:
+                st.session_state.confirm_overwrite = False
+                min_l = edited_settings["最小人数"].fillna(0).astype(int).tolist()
+                max_l = edited_settings["最大人数"].fillna(1).astype(int).tolist()
+                if sum(min_l) > num_attendees: st.warning("※ 設定された最小人数の合計が、出席可能者数を超えています。")
+                with st.spinner('計算中...'):
+                    res, success = solve_shift_schedule(clean_df, min_l, max_l, st.session_state.roster_df)
+                if success:
+                    st.session_state.shift_result = res
+                    st.session_state.editing_member = None
+                    st.session_state.editing_date = None
+                    st.rerun()
+                else: st.error("お稽古を作成できませんでした。条件を見直してください。")
 
-        # --- 手順3 ---
+        if st.session_state.confirm_overwrite:
+            st.warning("⚠️ **すでにお稽古が生成されています。**\n\n新しく生成すると、現在の編集内容はすべて失われます。よろしいですか？")
+            col_ov_y, col_ov_n = st.columns([1, 1])
+            if col_ov_y.button("はい、上書き生成します", use_container_width=True):
+                st.session_state.confirm_overwrite = False
+                min_l = edited_settings["最小人数"].fillna(0).astype(int).tolist()
+                max_l = edited_settings["最大人数"].fillna(1).astype(int).tolist()
+                if sum(min_l) > num_attendees: st.warning("※ 設定された最小人数の合計が、出席可能者数を超えています。")
+                with st.spinner('計算中...'):
+                    res, success = solve_shift_schedule(clean_df, min_l, max_l, st.session_state.roster_df)
+                if success:
+                    st.session_state.shift_result = res
+                    st.session_state.editing_member = None
+                    st.session_state.editing_date = None
+                    st.rerun()
+                else: st.error("お稽古を作成できませんでした。条件を見直してください。")
+            
+            if col_ov_n.button("いいえ", use_container_width=True):
+                st.session_state.confirm_overwrite = False
+                st.rerun()
+
+        # ------------------------------------------------
+        # 3. 生成結果・編集
+        # ------------------------------------------------
         if st.session_state.shift_result is not None:
             js_code = """
             <script>
@@ -405,7 +490,7 @@ if clean_df is not None:
                             btn.style.backgroundColor = '#ff4b4b'; btn.style.color = 'white'; btn.style.borderColor = '#ff4b4b'; btn.style.opacity = '1.0';
                             return;
                         } 
-                        if (!text.includes('生成') && !text.includes('解除') && !text.includes('保存')) {
+                        if (!text.includes('生成') && !text.includes('解除') && !text.includes('保存') && !text.includes('リセット') && !text.includes('はい') && !text.includes('いいえ') && !text.includes('キャンセル')) {
                              btn.style.backgroundColor = ''; btn.style.color = ''; btn.style.borderColor = '';
                         }
                     });
@@ -444,7 +529,6 @@ if clean_df is not None:
             st.caption("PCもしくはiPadでの編集をお勧めします。スマートフォンの場合は画面を横向きにしてください。")
             st.write("")
 
-            # ★修正: 現在のデータをコピーして操作する (参照切れ防止)
             current_df = st.session_state.shift_result.copy()
             date_to_row = {row['日程']: idx for idx, row in current_df.iterrows()}
             max_people_in_day = 0
@@ -504,8 +588,6 @@ if clean_df is not None:
                             list_curr = sort_members_by_roster(list_curr, st.session_state.roster_df)
                             current_df.at[row_idx_curr, "担当者"] = ", ".join(list_curr)
                             current_df.at[row_idx_curr, "人数"] = len(list_curr)
-                            
-                            # ★修正: 更新したDFをセッションに保存
                             st.session_state.shift_result = current_df
                             st.session_state.editing_member = None
                             st.rerun()
@@ -538,11 +620,6 @@ if clean_df is not None:
                                     label += "\u200b"
                                     on_click = "cancel_member"
                                 else:
-                                    if is_locked:
-                                        lock_label = member_b
-                                        if member_b in grade_map: lock_label = f"{grade_map[member_b]}.{member_b}"
-                                        cols[i].markdown(f"<div class='locked-member'>🔒{lock_label}</div>", unsafe_allow_html=True)
-                                        continue
                                     mem_a = st.session_state.editing_member['name']
                                     date_a = st.session_state.editing_member['source_date']
                                     if mem_a != member_b and date_val != date_a:
@@ -551,18 +628,29 @@ if clean_df is not None:
                                         if stat_a in ["○", "△"] and stat_b in ["○", "△"]:
                                             label += "\u200b\u200b"
                                             on_click = "swap"
+                                        elif is_locked:
+                                            lock_label = member_b
+                                            if member_b in grade_map: lock_label = f"{grade_map[member_b]}.{member_b}"
+                                            cols[i].markdown(f"<div class='locked-member'>🔒{lock_label}</div>", unsafe_allow_html=True)
+                                            continue
+                                    elif is_locked:
+                                        cols[i].markdown(f"<div class='locked-member'>🔒{member_b}</div>", unsafe_allow_html=True)
+                                        continue
                             elif is_date_edit:
                                 tgt_date = st.session_state.editing_date
-                                if is_locked:
-                                    lock_label = member_b
-                                    if member_b in grade_map: lock_label = f"{grade_map[member_b]}.{member_b}"
-                                    cols[i].markdown(f"<div class='locked-member'>🔒{lock_label}</div>", unsafe_allow_html=True)
-                                    continue
                                 if date_val != tgt_date:
                                     stat = get_status(clean_df, tgt_date, member_b)
                                     if stat in ["○", "△"]:
                                         label += "\u200b\u200b"
                                         on_click = "move_to_date"
+                                    elif is_locked:
+                                        lock_label = member_b
+                                        if member_b in grade_map: lock_label = f"{grade_map[member_b]}.{member_b}"
+                                        cols[i].markdown(f"<div class='locked-member'>🔒{lock_label}</div>", unsafe_allow_html=True)
+                                        continue
+                                elif is_locked:
+                                    cols[i].markdown(f"<div class='locked-member'>🔒{member_b}</div>", unsafe_allow_html=True)
+                                    continue
                             if cols[i].button(label, key=btn_key, disabled=disabled_state, use_container_width=True):
                                 if on_click == "select_member":
                                     st.session_state.editing_member = {'name': member_b, 'source_date': date_val}
@@ -606,7 +694,7 @@ if clean_df is not None:
                                     st.rerun()
             
             st.write("---")
-            st.markdown("#### テキストプレビュー (コピー用)")
+            st.subheader("テキストプレビュー")
             st.caption("※(△)について、伝助のコメントを確認し、「遅れ」もしくは「早退」に書き換えた上でご利用ください。")
             text_output = ""
             for _, row in current_df.iterrows():
@@ -622,7 +710,7 @@ if clean_df is not None:
                     members_str_jp = "、".join(formatted_members)
                     text_output += f"{date_str}{members_str_jp}\n"
             
-            st.text_area("以下のテキストをコピーして使用してください", text_output, height=300, label_visibility="collapsed")
+            st.code(text_output, language='text')
 
             st.write("---")
             st.subheader("伝助コメント欄")
@@ -646,20 +734,11 @@ if clean_df is not None:
                                 comments_html_lines.append(f"<div>{date_str} {m}：{fmt_comment}</div>")
                 
                 densuke_members = clean_df.columns[1:].tolist()
-                roster_members = []
-                if st.session_state.roster_df is not None:
-                    roster_members = [str(n).strip() for n in st.session_state.roster_df['氏名'].tolist()]
-                
-                unknown_in_densuke = [m for m in densuke_members if m not in roster_members]
-                for m in unknown_in_densuke:
-                    if m not in assigned_members_set and m in cm_data:
-                        fmt_comment = format_comment_text(cm_data[m])
-                        comments_html_lines.append(f"<div>(表記ゆれ) {m}：{fmt_comment}</div>")
-                
-                for m in roster_members:
-                    if m in densuke_members and m not in assigned_members_set and m in cm_data:
-                        fmt_comment = format_comment_text(cm_data[m])
-                        comments_html_lines.append(f"<div style='color: #808080;'>(不参加) {m}：{fmt_comment}</div>")
+                for m in densuke_members:
+                    if m not in assigned_members_set:
+                        if m in cm_data:
+                            fmt_comment = format_comment_text(cm_data[m])
+                            comments_html_lines.append(f"<div style='color: #808080;'>(お休み) {m}：{fmt_comment}</div>")
                 
                 if comments_html_lines:
                     full_html = "".join(comments_html_lines)
@@ -670,7 +749,7 @@ if clean_df is not None:
             st.write("")
             st.write("")
             save_data = {
-                'clean_df': st.session_state.clean_df, # ★修正: セッションから保存
+                'clean_df': st.session_state.clean_df,
                 'roster_df': st.session_state.roster_df,
                 'shift_result': st.session_state.shift_result,
                 'settings_df': st.session_state.settings_df,
@@ -685,4 +764,4 @@ if clean_df is not None:
             
             col_dl_L, col_dl_R = st.columns([3, 1])
             with col_dl_R:
-                st.download_button("💾 作業を一時保存する", data=buffer, file_name=file_name, mime="application/octet-stream", use_container_width=True)
+                st.download_button("💾 作業を保存", data=buffer, file_name=file_name, mime="application/octet-stream", use_container_width=True)
