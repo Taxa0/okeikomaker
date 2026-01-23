@@ -17,13 +17,13 @@ st.set_page_config(
 )
 
 # ==========================================
-# iPhone/iPad用アイコン設定 & CSS
+# JavaScript設定 (アイコン設定 & 色分けロジック)
 # ==========================================
-# スマートフォンでのアイコン表示(Apple Touch Icon)に対応させるためのスクリプト
-icon_js = """
+# ボタンの色制御を強化( !important を付与)して、確実に色が反映されるように修正
+js_code = """
 <script>
+    // 1. Apple Touch Iconの設定
     function setAppleTouchIcon(emoji) {
-        // 絵文字を画像データ(DataURL)に変換
         const canvas = document.createElement('canvas');
         canvas.width = 192;
         canvas.height = 192;
@@ -31,25 +31,98 @@ icon_js = """
         ctx.font = '160px serif';
         ctx.fillText(emoji, 10, 160);
         const dataUrl = canvas.toDataURL();
-        
-        // 親ウィンドウのhead要素を取得
         const head = window.parent.document.querySelector('head');
-        
-        // 既存のapple-touch-iconがあれば削除
         const existing = head.querySelector('link[rel="apple-touch-icon"]');
         if (existing) { existing.remove(); }
-        
-        // 新しいアイコンタグを追加
         const link = window.parent.document.createElement('link');
         link.rel = 'apple-touch-icon';
         link.href = dataUrl;
         head.appendChild(link);
     }
-    // 実行
     setAppleTouchIcon('🍵');
+
+    // 2. ボタンの色付けロジック (常時監視)
+    function applyColors() {
+        const buttons = window.parent.document.querySelectorAll('button');
+        buttons.forEach(btn => {
+            const text = btn.innerText;
+            
+            // --- 日付ボタン (\\u200E を含む) ---
+            if (text.includes('\\u200E')) {
+                // ダブルマーカー (\\u200b\\u200b) = 移動候補
+                if (text.includes('\\u200b\\u200b')) {
+                    if (text.includes('(△)')) {
+                        // 黄色 (警告色)
+                        btn.style.setProperty('background-color', '#ffc107', 'important');
+                        btn.style.setProperty('color', 'black', 'important');
+                        btn.style.setProperty('border-color', '#ffc107', 'important');
+                    } else {
+                        // 緑色 (移動可能)
+                        btn.style.setProperty('background-color', '#28a745', 'important');
+                        btn.style.setProperty('color', 'white', 'important');
+                        btn.style.setProperty('border-color', '#28a745', 'important');
+                    }
+                } 
+                // シングルマーカー (\\u200b) = 選択中
+                else if (text.includes('\\u200b')) {
+                    // 赤色
+                    btn.style.setProperty('background-color', '#ff4b4b', 'important');
+                    btn.style.setProperty('color', 'white', 'important');
+                    btn.style.setProperty('border-color', '#ff4b4b', 'important');
+                } 
+                // マーカーなし = 通常 (濃いグレー)
+                else {
+                    btn.style.setProperty('background-color', '#5D6D7E', 'important');
+                    btn.style.setProperty('color', 'white', 'important');
+                    btn.style.setProperty('border-color', '#5D6D7E', 'important');
+                }
+                return;
+            }
+
+            // --- メンバーボタン: 選択中 (シングルマーカー \\u200b) ---
+            if (text.includes('\\u200b')) {
+                if (!text.includes('\\u200b\\u200b')) {
+                    btn.style.setProperty('background-color', '#ff4b4b', 'important');
+                    btn.style.setProperty('color', 'white', 'important');
+                    btn.style.setProperty('border-color', '#ff4b4b', 'important');
+                    btn.style.setProperty('opacity', '1.0', 'important');
+                    return;
+                }
+            } 
+
+            // --- メンバーボタン: 交換/移動候補 (ダブルマーカー \\u200b\\u200b) ---
+            if (text.includes('\\u200b\\u200b')) {
+                if (text.includes('(△)')) {
+                    btn.style.setProperty('background-color', '#ffc107', 'important');
+                    btn.style.setProperty('color', 'black', 'important');
+                    btn.style.setProperty('border-color', '#ffc107', 'important');
+                } else {
+                    btn.style.setProperty('background-color', '#28a745', 'important');
+                    btn.style.setProperty('color', 'white', 'important');
+                    btn.style.setProperty('border-color', '#28a745', 'important');
+                }
+                return;
+            } 
+
+            // --- それ以外のボタン (デフォルトに戻す) ---
+            // 特定のボタン(機能ボタン)は色を変えないように除外リストで判定
+            if (!text.includes('生成') && !text.includes('解除') && !text.includes('保存') && !text.includes('リセット') && !text.includes('はい') && !text.includes('いいえ') && !text.includes('キャンセル') && !text.includes('CSV') && !text.includes('名簿') && !text.includes('バックアップ')) {
+                 btn.style.removeProperty('background-color');
+                 btn.style.removeProperty('color');
+                 btn.style.removeProperty('border-color');
+            }
+        });
+    }
+    
+    // 監視設定
+    const observer = new MutationObserver(() => { applyColors(); });
+    observer.observe(window.parent.document.body, { childList: true, subtree: true });
+    // 念のため定期実行も入れておく
+    setInterval(applyColors, 200);
+    applyColors();
 </script>
 """
-components.html(icon_js, height=0, width=0)
+components.html(js_code, height=0, width=0)
 
 st.markdown("""
 <style>
@@ -104,22 +177,8 @@ st.markdown("""
         background-color: #732d91 !important;
     }
 
-    /* --- マーカー判定ルール --- */
-    button[aria-label*="\u200b\u200b"][aria-label*="(△)"] {
-        background-color: #ffc107 !important; border-color: #ffc107 !important; color: black !important;
-    }
-    button[aria-label*="\u200b\u200b"][aria-label*="(△)"]:hover { background-color: #e0a800 !important; }
-
-    button[aria-label*="\u200b\u200b"]:not([aria-label*="(△)"]) {
-        background-color: #28a745 !important; border-color: #28a745 !important; color: white !important;
-    }
-    button[aria-label*="\u200b\u200b"]:not([aria-label*="(△)"]):hover { background-color: #218838 !important; }
-
-    button[aria-label*="\u200b"]:not([aria-label*="\u200b\u200b"]) {
-        background-color: #ff4b4b !important; border-color: #ff4b4b !important; color: white !important; opacity: 1.0 !important;
-    }
-    button[aria-label*="\u200b"]:not([aria-label*="\u200b\u200b"]):hover { background-color: #ff3333 !important; }
-    button[aria-label*="\u200b"]:disabled { color: white !important; }
+    /* --- マーカー判定ルール (CSSも念のため残すがJS優先) --- */
+    /* JSの !important により基本的にJSが勝つ */
 
     div[data-testid="column"]:nth-of-type(1) div.stButton button:not([aria-label*="\u200b"]) {
         background-color: #2c3e50 !important; border-color: #2c3e50 !important; color: white !important;
@@ -158,90 +217,31 @@ st.markdown("""
         height: auto !important;
     }
     div[data-testid="stPopover"] > button:hover { color: #732d91 !important; }
+    
+    /* アコーディオン内の数値入力のみラベルを非表示 */
+    div[data-testid="stExpanderDetails"] div[data-testid="stNumberInput"] label {
+        display: none;
+    }
 </style>
 """, unsafe_allow_html=True)
-
-# ==========================================
-# JavaScript設定 (常に有効にするためここに移動)
-# ==========================================
-js_code = """
-<script>
-    function applyColors() {
-        const buttons = window.parent.document.querySelectorAll('button');
-        buttons.forEach(btn => {
-            const text = btn.innerText;
-            
-            // 1. 日付ボタン (\u200E を含む場合)
-            if (text.includes('\u200E')) {
-                // ダブル (\u200b\u200b) = 移動候補 (緑/黄) を *先に* 判定
-                if (text.includes('\u200b\u200b')) {
-                    if (text.includes('(△)')) {
-                        btn.style.backgroundColor = '#ffc107'; 
-                        btn.style.color = 'black'; 
-                        btn.style.borderColor = '#ffc107';
-                    } else {
-                        btn.style.backgroundColor = '#28a745'; 
-                        btn.style.color = 'white'; 
-                        btn.style.borderColor = '#28a745';
-                    }
-                } 
-                // シングル (\u200b) = 選択中 (赤)
-                else if (text.includes('\u200b')) {
-                    btn.style.backgroundColor = '#ff4b4b'; 
-                    btn.style.color = 'white'; 
-                    btn.style.borderColor = '#ff4b4b';
-                } 
-                // マーカーなし = 通常 (濃いグレー)
-                else {
-                    btn.style.backgroundColor = '#5D6D7E'; 
-                    btn.style.color = 'white'; 
-                    btn.style.borderColor = '#5D6D7E';
-                }
-                return;
-            }
-
-            // 2. メンバーボタン: 選択中(キャンセル待ち)
-            if (text.includes('\u200b')) {
-                if (!text.includes('\u200b\u200b')) {
-                    btn.style.backgroundColor = '#ff4b4b'; 
-                    btn.style.color = 'white'; 
-                    btn.style.borderColor = '#ff4b4b'; 
-                    btn.style.opacity = '1.0';
-                    return;
-                }
-            } 
-
-            // 3. メンバーボタン: 交換/移動候補 (緑 or 黄色)
-            if (text.includes('\u200b\u200b')) {
-                if (text.includes('(△)')) {
-                    btn.style.backgroundColor = '#ffc107'; btn.style.color = 'black'; btn.style.borderColor = '#ffc107';
-                } else {
-                    btn.style.backgroundColor = '#28a745'; btn.style.color = 'white'; btn.style.borderColor = '#28a745';
-                }
-                return;
-            } 
-
-            // 4. それ以外のボタン (デフォルトに戻す)
-            if (!text.includes('生成') && !text.includes('解除') && !text.includes('保存') && !text.includes('リセット') && !text.includes('はい') && !text.includes('いいえ') && !text.includes('キャンセル') && !text.includes('CSV') && !text.includes('名簿') && !text.includes('バックアップ')) {
-                    btn.style.backgroundColor = ''; btn.style.color = ''; btn.style.borderColor = '';
-            }
-        });
-    }
-    const observer = new MutationObserver(() => { applyColors(); });
-    observer.observe(window.parent.document.body, { childList: true, subtree: true });
-    setInterval(applyColors, 100);
-    applyColors();
-</script>
-"""
-components.html(js_code, height=0, width=0)
 
 # --- 関数定義 ---
 
 # コールバック関数: グローバル設定が変更されたらDataFrameを更新する
 def apply_global_settings():
     if 'settings_df' in st.session_state and st.session_state.settings_df is not None:
-        st.session_state.settings_df["最小人数"] = st.session_state.global_min
-        st.session_state.settings_df["最大人数"] = st.session_state.global_max
+        val_min = st.session_state.global_min
+        val_max = st.session_state.global_max
+        
+        # DataFrameの更新
+        st.session_state.settings_df["最小人数"] = val_min
+        st.session_state.settings_df["最大人数"] = val_max
+        
+        # 個別ウィジェット用セッションステートの更新
+        # これをやらないと、テーブル表示の数値入力ボックスに値が反映されない
+        for i in range(len(st.session_state.settings_df)):
+            st.session_state[f"min_{i}"] = val_min
+            st.session_state[f"max_{i}"] = val_max
 
 def clean_data(raw_df):
     if len(raw_df) > 0:
@@ -433,6 +433,7 @@ if 'mapping_source_selected' not in st.session_state: st.session_state.mapping_s
 if 'loaded_resume_name' not in st.session_state: st.session_state.loaded_resume_name = None
 if 'confirm_overwrite' not in st.session_state: st.session_state.confirm_overwrite = False
 if 'confirm_reset' not in st.session_state: st.session_state.confirm_reset = False
+if 'memo_text' not in st.session_state: st.session_state.memo_text = ""
 
 # --- 手順1 (読み込み) ---
 st.markdown("### 1. アップロード")
@@ -454,7 +455,6 @@ if uploaded_file is not None:
                 uploaded_file.seek(0)
                 raw_df = pd.read_csv(uploaded_file, encoding='cp932')
             
-            # 誤アップロード防止の検証
             cols_str = [str(c) for c in raw_df.columns]
             if '氏名' in cols_str and '学年' in cols_str:
                 st.error("エラー：伝助ではなく、部員名簿のCSVファイルがアップロードされた可能性があります。")
@@ -489,7 +489,6 @@ help_text_roster = """部員名簿のアップロードは以下のメリット�
 
 uploaded_roster = st.file_uploader("**(任意) 部員名簿のCSVファイル**", type=['csv'], key="roster", help=help_text_roster)
 
-# 名簿読み込み処理
 if uploaded_roster is not None:
     try:
         if 'last_roster_name' not in st.session_state or st.session_state.last_roster_name != uploaded_roster.name:
@@ -523,6 +522,8 @@ with st.expander("保存した作業を再開"):
                 st.session_state.has_comment_row = resume_data.get('has_comment_row', False)
                 st.session_state.raw_df = resume_data.get('raw_df', None)
                 st.session_state.name_mappings = resume_data.get('name_mappings', {})
+                st.session_state.memo_text = resume_data.get('memo_text', "")
+                
                 st.session_state.loaded_resume_name = uploaded_resume.name
                 st.session_state.confirm_overwrite = False
                 st.session_state.confirm_reset = False
@@ -567,10 +568,10 @@ if clean_df is not None:
         st.markdown("### 2. お稽古の人数を設定")
         
         num_absentees = total_members - num_attendees
-        st.markdown(f"全<span style='font-size:1.3em; font-weight:bold;'>{total_days}</span>日程　"
-                    f"伝助回答者<span style='font-size:1.3em; font-weight:bold;'>{total_members}</span>名　"
-                    f"うち参加者<span style='font-size:1.3em; font-weight:bold;'>{num_attendees}</span>名　"
-                    f"欠席者<span style='font-size:1.3em; font-weight:bold;'>{num_absentees}</span>名", 
+        st.markdown(f"全<span style='font-weight:bold; font-size:1.2em;'>{total_days}</span>日程　"
+                    f"伝助回答者<span style='font-weight:bold; font-size:1.2em;'>{total_members}</span>名　"
+                    f"うち参加者<span style='font-weight:bold; font-size:1.2em;'>{num_attendees}</span>名　"
+                    f"欠席者<span style='font-weight:bold; font-size:1.2em;'>{num_absentees}</span>名", 
                     unsafe_allow_html=True)
         
         if st.session_state.roster_df is not None:
@@ -633,10 +634,9 @@ if clean_df is not None:
                 
                 if st.session_state.name_mappings:
                     st.markdown("**🔗 現在設定されている紐付け**")
-                    cols = st.columns(4)
-                    for i, (old, new) in enumerate(list(st.session_state.name_mappings.items())):
-                        with cols[i % 4]:
-                            st.write(f"{old} ➡ {new}")
+                    for old, new in list(st.session_state.name_mappings.items()):
+                        col_btn, col_txt = st.columns([0.6, 5]) 
+                        with col_btn:
                             if st.button("解除", key=f"del_map_{old}"):
                                 del st.session_state.name_mappings[old]
                                 if st.session_state.raw_df is not None:
@@ -646,6 +646,8 @@ if clean_df is not None:
                                     st.session_state.has_comment_row = has_comment_row
                                     st.session_state.shift_result = None
                                 st.rerun()
+                        with col_txt:
+                            st.markdown(f"<div style='line-height: 34px;'>{old} ➡ {new}</div>", unsafe_allow_html=True)
 
                 for _, row in r_df.iterrows():
                     name = str(row.get('氏名', '')).strip()
@@ -657,12 +659,12 @@ if clean_df is not None:
                         else: status = "欠席"
                     status_data.append({"氏名": name, "状況": status})
                 if status_data:
-                    # ★修正: 部員数表示をマークダウンの太字に変更
-                    st.markdown(f"部員名簿(部員数:**{len(status_data)}**名)")
+                    st.markdown(f"部員名簿(部員数:<span style='font-weight:bold; font-size:1.2em;'>{len(status_data)}</span>名)", unsafe_allow_html=True)
                     st.dataframe(pd.DataFrame(status_data), hide_index=True, use_container_width=True)
 
         if st.session_state.get('settings_df') is None or len(st.session_state.settings_df) != total_days:
             init_data = {
+                "有効": [True] * len(dates_list),
                 "日程": dates_list, 
                 "最小人数": [default_bulk_min] * len(dates_list), 
                 "最大人数": [default_bulk_max] * len(dates_list),
@@ -673,74 +675,134 @@ if clean_df is not None:
             st.session_state.global_min = default_bulk_min
             st.session_state.global_max = default_bulk_max
         else:
+            if "有効" not in st.session_state.settings_df.columns:
+                st.session_state.settings_df["有効"] = True
             if "1年生最小" not in st.session_state.settings_df.columns:
                 st.session_state.settings_df["1年生最小"] = None
             if "1年生最大" not in st.session_state.settings_df.columns:
                 st.session_state.settings_df["1年生最大"] = None
+            
+            desired_order = ["有効", "日程", "最小人数", "最大人数", "1年生最小", "1年生最大"]
+            existing_cols = st.session_state.settings_df.columns.tolist()
+            new_order = [c for c in desired_order if c in existing_cols] + [c for c in existing_cols if c not in desired_order]
+            st.session_state.settings_df = st.session_state.settings_df[new_order]
 
-        col_min, col_max, col_empty = st.columns([1, 1, 2])
+        col_min, col_max, col_empty = st.columns([1, 1, 5])
         with col_min:
             if 'global_min' not in st.session_state: st.session_state.global_min = default_bulk_min
+            # コールバック関数で個別設定も更新
             st.number_input("最小人数", min_value=0, max_value=safe_input_max, key="global_min", on_change=apply_global_settings)
         with col_max:
             if 'global_max' not in st.session_state: st.session_state.global_max = default_bulk_max
+            # コールバック関数で個別設定も更新
             st.number_input("最大人数", min_value=1, max_value=safe_input_max, key="global_max", on_change=apply_global_settings)
 
         with st.expander("日程ごとの詳細設定", expanded=False):
-            num_rows = len(st.session_state.settings_df)
-            table_height = (num_rows + 1) * 35 + 5
+            st.write("各日程の設定を行います。チェックを外すとその日程はスキップされます。")
+            h_col1, h_col2, h_col3, h_col4, h_col5, h_col6 = st.columns([0.5, 2, 1, 1, 1, 1])
+            h_col1.markdown("**有効**")
+            h_col2.markdown("**日程**")
+            h_col3.markdown("**最小**")
+            h_col4.markdown("**最大**")
+            h_col5.markdown("**1年最小**")
+            h_col6.markdown("**1年最大**")
+            st.markdown("<hr style='margin: 0px 0px 10px 0px; padding: 0px; border-top: 1px solid rgba(49, 51, 63, 0.2);'>", unsafe_allow_html=True)
+
+            dates = st.session_state.settings_df["日程"].tolist()
             
-            st.session_state.settings_df = st.data_editor(
-                st.session_state.settings_df, 
-                hide_index=True, 
-                use_container_width=True,
-                height=table_height,
-                column_config={
-                    "1年生最小": st.column_config.NumberColumn(
-                        "1年生最小",
-                        min_value=0,
-                        max_value=safe_input_max,
-                        step=1,
-                        required=False
-                    ),
-                    "1年生最大": st.column_config.NumberColumn(
-                        "1年生最大",
-                        min_value=0,
-                        max_value=safe_input_max,
-                        step=1,
-                        required=False
-                    )
-                }
-            )
+            updated_enabled = []
+            updated_min = []
+            updated_max = []
+            updated_fmin = []
+            updated_fmax = []
+
+            for i, date_val in enumerate(dates):
+                c1, c2, c3, c4, c5, c6 = st.columns([0.5, 2, 1, 1, 1, 1])
+                
+                curr_enabled = bool(st.session_state.settings_df.at[i, "有効"])
+                
+                # キーの初期値をGlobalから反映するためにsession_stateを確認
+                if f"min_{i}" not in st.session_state:
+                    st.session_state[f"min_{i}"] = int(st.session_state.settings_df.at[i, "最小人数"])
+                if f"max_{i}" not in st.session_state:
+                    st.session_state[f"max_{i}"] = int(st.session_state.settings_df.at[i, "最大人数"])
+                
+                val_fmin = st.session_state.settings_df.at[i, "1年生最小"]
+                curr_fmin = int(val_fmin) if pd.notna(val_fmin) else None
+                
+                val_fmax = st.session_state.settings_df.at[i, "1年生最大"]
+                curr_fmax = int(val_fmax) if pd.notna(val_fmax) else None
+
+                new_enabled = c1.checkbox("有効", value=curr_enabled, key=f"en_{i}", label_visibility="collapsed")
+                c2.markdown(f"<div style='margin-top: 5px; font-weight:bold;'>{date_val}</div>", unsafe_allow_html=True)
+                
+                # セッションステートキーを指定することで、Global設定変更時にon_changeで値を書き換えられるようにする
+                new_min = c3.number_input("最小", min_value=0, max_value=safe_input_max, key=f"min_{i}", label_visibility="collapsed", disabled=not new_enabled)
+                new_max = c4.number_input("最大", min_value=1, max_value=safe_input_max, key=f"max_{i}", label_visibility="collapsed", disabled=not new_enabled)
+                
+                new_fmin = c5.number_input("1年最小", min_value=0, max_value=safe_input_max, value=curr_fmin, key=f"fmin_{i}", label_visibility="collapsed", placeholder="空", disabled=not new_enabled)
+                new_fmax = c6.number_input("1年最大", min_value=0, max_value=safe_input_max, value=curr_fmax, key=f"fmax_{i}", label_visibility="collapsed", placeholder="空", disabled=not new_enabled)
+
+                updated_enabled.append(new_enabled)
+                updated_min.append(new_min)
+                updated_max.append(new_max)
+                updated_fmin.append(new_fmin)
+                updated_fmax.append(new_fmax)
+            
+            # 合計値の表示 (1年生列は空欄)
+            st.markdown("<hr style='margin: 10px 0px; padding: 0px; border-top: 1px solid rgba(49, 51, 63, 0.2);'>", unsafe_allow_html=True)
+            total_min = sum([m for i, m in enumerate(updated_min) if updated_enabled[i]])
+            total_max = sum([m for i, m in enumerate(updated_max) if updated_enabled[i]])
+
+            t1, t2, t3, t4, t5, t6 = st.columns([0.5, 2, 1, 1, 1, 1])
+            t2.markdown("**合計** (有効分)")
+            t3.markdown(f"**{total_min}**")
+            t4.markdown(f"**{total_max}**")
+            t5.markdown("")
+            t6.markdown("")
 
         generate_clicked = st.button("🔮 お稽古生成 🔮", type="primary", use_container_width=True)
         
         if generate_clicked:
+            st.session_state.settings_df["有効"] = updated_enabled
+            st.session_state.settings_df["最小人数"] = updated_min
+            st.session_state.settings_df["最大人数"] = updated_max
+            st.session_state.settings_df["1年生最小"] = updated_fmin
+            st.session_state.settings_df["1年生最大"] = updated_fmax
+            
             dates = st.session_state.settings_df["日程"].tolist()
-            min_l = st.session_state.settings_df["最小人数"].fillna(0).astype(int).tolist()
-            max_l = st.session_state.settings_df["最大人数"].fillna(1).astype(int).tolist()
-            fresh_min_l = st.session_state.settings_df["1年生最小"].tolist()
-            fresh_max_l = st.session_state.settings_df["1年生最大"].tolist()
             
+            calc_min_l = []
+            calc_max_l = []
+            calc_fresh_min_l = []
+            calc_fresh_max_l = []
+            
+            for i in range(len(dates)):
+                if updated_enabled[i]:
+                    calc_min_l.append(updated_min[i])
+                    calc_max_l.append(updated_max[i])
+                    calc_fresh_min_l.append(updated_fmin[i])
+                    calc_fresh_max_l.append(updated_fmax[i])
+                else:
+                    calc_min_l.append(0)
+                    calc_max_l.append(0)
+                    calc_fresh_min_l.append(None)
+                    calc_fresh_max_l.append(None)
+
             error_messages = []
-            
             for i, date in enumerate(dates):
-                if min_l[i] > max_l[i]:
-                    error_messages.append(f"【{date}】最小人数({min_l[i]})が最大人数({max_l[i]})を上回っています。")
-                
-                f_min = fresh_min_l[i]
-                f_max = fresh_max_l[i]
-                if pd.notna(f_min) and pd.notna(f_max):
-                    if int(f_min) > int(f_max):
-                        error_messages.append(f"【{date}】1年生最小({int(f_min)})が1年生最大({int(f_max)})を上回っています。")
-                
-                if min_l[i] < 0 or max_l[i] < 0:
-                    error_messages.append(f"【{date}】人数に負の数が含まれています。")
-                if (pd.notna(f_min) and int(f_min) < 0) or (pd.notna(f_max) and int(f_max) < 0):
-                    error_messages.append(f"【{date}】1年生の人数に負の数が含まれています。")
-                
-                if pd.notna(f_min) and int(f_min) > max_l[i]:
-                    error_messages.append(f"【{date}】1年生最小({int(f_min)})が最大人数({max_l[i]})を上回っています。")
+                if updated_enabled[i]:
+                    if updated_min[i] > updated_max[i]:
+                        error_messages.append(f"【{date}】最小人数({updated_min[i]})が最大人数({updated_max[i]})を上回っています。")
+                    
+                    f_min = updated_fmin[i]
+                    f_max = updated_fmax[i]
+                    if f_min is not None and f_max is not None:
+                        if int(f_min) > int(f_max):
+                            error_messages.append(f"【{date}】1年生最小({int(f_min)})が1年生最大({int(f_max)})を上回っています。")
+                    
+                    if f_min is not None and int(f_min) > updated_max[i]:
+                         error_messages.append(f"【{date}】1年生最小({int(f_min)})が最大人数({updated_max[i]})を上回っています。")
 
             if error_messages:
                 for msg in error_messages:
@@ -750,9 +812,9 @@ if clean_df is not None:
                     st.session_state.confirm_overwrite = True
                 else:
                     st.session_state.confirm_overwrite = False
-                    if sum(min_l) > num_attendees: st.warning("※ 設定された最小人数の合計が、出席可能者数を超えています。")
+                    if sum(calc_min_l) > num_attendees: st.warning("※ 設定された最小人数の合計が、出席可能者数を超えています。")
                     with st.spinner('計算中...'):
-                        res, success = solve_shift_schedule(clean_df, min_l, max_l, st.session_state.roster_df, fresh_min_l, fresh_max_l)
+                        res, success = solve_shift_schedule(clean_df, calc_min_l, calc_max_l, st.session_state.roster_df, calc_fresh_min_l, calc_fresh_max_l)
                     if success:
                         st.session_state.shift_result = res
                         st.session_state.editing_member = None
@@ -766,14 +828,33 @@ if clean_df is not None:
             if col_ov_y.button("はい、上書き生成します", use_container_width=True):
                 st.session_state.confirm_overwrite = False
                 
-                min_l = st.session_state.settings_df["最小人数"].fillna(0).astype(int).tolist()
-                max_l = st.session_state.settings_df["最大人数"].fillna(1).astype(int).tolist()
-                fresh_min_l = st.session_state.settings_df["1年生最小"].tolist()
-                fresh_max_l = st.session_state.settings_df["1年生最大"].tolist()
+                dates = st.session_state.settings_df["日程"].tolist()
+                min_l_raw = st.session_state.settings_df["最小人数"].tolist()
+                max_l_raw = st.session_state.settings_df["最大人数"].tolist()
+                fmin_raw = st.session_state.settings_df["1年生最小"].tolist()
+                fmax_raw = st.session_state.settings_df["1年生最大"].tolist()
+                enabled_l = st.session_state.settings_df["有効"].tolist()
+
+                calc_min_l = []
+                calc_max_l = []
+                calc_fresh_min_l = []
+                calc_fresh_max_l = []
                 
-                if sum(min_l) > num_attendees: st.warning("※ 設定された最小人数の合計が、出席可能者数を超えています。")
+                for i in range(len(dates)):
+                    if enabled_l[i]:
+                        calc_min_l.append(min_l_raw[i])
+                        calc_max_l.append(max_l_raw[i])
+                        calc_fresh_min_l.append(fmin_raw[i])
+                        calc_fresh_max_l.append(fmax_raw[i])
+                    else:
+                        calc_min_l.append(0)
+                        calc_max_l.append(0)
+                        calc_fresh_min_l.append(None)
+                        calc_fresh_max_l.append(None)
+                
+                if sum(calc_min_l) > num_attendees: st.warning("※ 設定された最小人数の合計が、出席可能者数を超えています。")
                 with st.spinner('計算中...'):
-                    res, success = solve_shift_schedule(clean_df, min_l, max_l, st.session_state.roster_df, fresh_min_l, fresh_max_l)
+                    res, success = solve_shift_schedule(clean_df, calc_min_l, calc_max_l, st.session_state.roster_df, calc_fresh_min_l, calc_fresh_max_l)
                 if success:
                     st.session_state.shift_result = res
                     st.session_state.editing_member = None
@@ -994,6 +1075,25 @@ if clean_df is not None:
                                     st.session_state.editing_date = None
                                     st.rerun()
             
+            st.write("")
+            col_dl_L, col_dl_R = st.columns([3, 1])
+            with col_dl_R:
+                save_data_temp = {
+                    'clean_df': st.session_state.clean_df,
+                    'roster_df': st.session_state.roster_df,
+                    'shift_result': st.session_state.shift_result,
+                    'settings_df': st.session_state.settings_df,
+                    'comments_data': st.session_state.comments_data,
+                    'has_comment_row': st.session_state.has_comment_row,
+                    'memo_text': st.session_state.memo_text
+                }
+                buffer_temp = io.BytesIO()
+                pickle.dump(save_data_temp, buffer_temp)
+                today_str = datetime.now().strftime('%Y%m%d')
+                file_name_temp = f"{today_str}_backup.okeiko"
+                
+                st.download_button("💾 作業を保存", data=buffer_temp, file_name=file_name_temp, mime="application/octet-stream", use_container_width=True)
+
             st.write(""); st.write("")
             st.subheader("お稽古プレビュー")
             st.write("""下のテキストボックスの右上部分をクリックすることで、お稽古のテキストをコピーすることができます。
@@ -1051,22 +1151,6 @@ if clean_df is not None:
                 else:
                     st.info("表示すべきコメントはありません")
             
-            st.write("")
-            st.write("")
-            save_data = {
-                'clean_df': st.session_state.clean_df,
-                'roster_df': st.session_state.roster_df,
-                'shift_result': st.session_state.shift_result,
-                'settings_df': st.session_state.settings_df,
-                'comments_data': st.session_state.comments_data,
-                'has_comment_row': st.session_state.has_comment_row
-            }
-            buffer = io.BytesIO()
-            pickle.dump(save_data, buffer)
-            
-            today_str = datetime.now().strftime('%Y%m%d')
-            file_name = f"{today_str}_backup.okeiko"
-            
-            col_dl_L, col_dl_R = st.columns([3, 1])
-            with col_dl_R:
-                st.download_button("💾 作業を保存", data=buffer, file_name=file_name, mime="application/octet-stream", use_container_width=True)
+            st.write(""); st.write("")
+            st.subheader("メモ")
+            st.text_area("自由にメモを残せます", key="memo_text", height=400)
