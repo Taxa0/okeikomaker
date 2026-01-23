@@ -19,7 +19,6 @@ st.set_page_config(
 # ==========================================
 # JavaScript設定 (アイコン設定 & 色分けロジック)
 # ==========================================
-# ボタンの色制御を強化( !important を付与)して、確実に色が反映されるように修正
 js_code = """
 <script>
     // 1. Apple Touch Iconの設定
@@ -49,7 +48,6 @@ js_code = """
             
             // --- 日付ボタン (\\u200E を含む) ---
             if (text.includes('\\u200E')) {
-                // ダブルマーカー (\\u200b\\u200b) = 移動候補
                 if (text.includes('\\u200b\\u200b')) {
                     if (text.includes('(△)')) {
                         // 黄色 (警告色)
@@ -63,14 +61,12 @@ js_code = """
                         btn.style.setProperty('border-color', '#28a745', 'important');
                     }
                 } 
-                // シングルマーカー (\\u200b) = 選択中
                 else if (text.includes('\\u200b')) {
                     // 赤色
                     btn.style.setProperty('background-color', '#ff4b4b', 'important');
                     btn.style.setProperty('color', 'white', 'important');
                     btn.style.setProperty('border-color', '#ff4b4b', 'important');
                 } 
-                // マーカーなし = 通常 (濃いグレー)
                 else {
                     btn.style.setProperty('background-color', '#5D6D7E', 'important');
                     btn.style.setProperty('color', 'white', 'important');
@@ -79,7 +75,7 @@ js_code = """
                 return;
             }
 
-            // --- メンバーボタン: 選択中 (シングルマーカー \\u200b) ---
+            // --- メンバーボタン ---
             if (text.includes('\\u200b')) {
                 if (!text.includes('\\u200b\\u200b')) {
                     btn.style.setProperty('background-color', '#ff4b4b', 'important');
@@ -90,7 +86,6 @@ js_code = """
                 }
             } 
 
-            // --- メンバーボタン: 交換/移動候補 (ダブルマーカー \\u200b\\u200b) ---
             if (text.includes('\\u200b\\u200b')) {
                 if (text.includes('(△)')) {
                     btn.style.setProperty('background-color', '#ffc107', 'important');
@@ -105,7 +100,6 @@ js_code = """
             } 
 
             // --- それ以外のボタン (デフォルトに戻す) ---
-            // 特定のボタン(機能ボタン)は色を変えないように除外リストで判定
             if (!text.includes('生成') && !text.includes('解除') && !text.includes('保存') && !text.includes('リセット') && !text.includes('はい') && !text.includes('いいえ') && !text.includes('キャンセル') && !text.includes('CSV') && !text.includes('名簿') && !text.includes('バックアップ')) {
                  btn.style.removeProperty('background-color');
                  btn.style.removeProperty('color');
@@ -117,7 +111,6 @@ js_code = """
     // 監視設定
     const observer = new MutationObserver(() => { applyColors(); });
     observer.observe(window.parent.document.body, { childList: true, subtree: true });
-    // 念のため定期実行も入れておく
     setInterval(applyColors, 200);
     applyColors();
 </script>
@@ -177,9 +170,7 @@ st.markdown("""
         background-color: #732d91 !important;
     }
 
-    /* --- マーカー判定ルール (CSSも念のため残すがJS優先) --- */
-    /* JSの !important により基本的にJSが勝つ */
-
+    /* --- マーカー判定ルール (JS優先) --- */
     div[data-testid="column"]:nth-of-type(1) div.stButton button:not([aria-label*="\u200b"]) {
         background-color: #2c3e50 !important; border-color: #2c3e50 !important; color: white !important;
     }
@@ -222,55 +213,56 @@ st.markdown("""
     div[data-testid="stExpanderDetails"] div[data-testid="stNumberInput"] label {
         display: none;
     }
+
+    /* 数値入力ボックスのフォントサイズを大きく */
+    div[data-testid="stNumberInput"] input {
+        font-size: 1.25rem !important;
+    }
+
+    /* 最小(青)・最大(赤)の色味 */
+    div[data-testid="stNumberInput"] input[aria-label*="最小"] {
+        background-color: #cce5ff !important;
+        color: black !important;
+    }
+    
+    div[data-testid="stNumberInput"] input[aria-label*="最大"] {
+        background-color: #ffcdd2 !important;
+        color: black !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # --- 関数定義 ---
 
-# コールバック関数: グローバル設定が変更されたらDataFrameを更新する
 def apply_global_settings():
     if 'settings_df' in st.session_state and st.session_state.settings_df is not None:
         val_min = st.session_state.global_min
         val_max = st.session_state.global_max
-        
-        # DataFrameの更新
         st.session_state.settings_df["最小人数"] = val_min
         st.session_state.settings_df["最大人数"] = val_max
-        
-        # 個別ウィジェット用セッションステートの更新
-        # これをやらないと、テーブル表示の数値入力ボックスに値が反映されない
         for i in range(len(st.session_state.settings_df)):
             st.session_state[f"min_{i}"] = val_min
             st.session_state[f"max_{i}"] = val_max
 
-def clean_data(raw_df):
-    if len(raw_df) > 0:
-        first_col = raw_df.iloc[:, 0].astype(str).fillna("")
-        comments_data = {}
-        has_comment_row = False
-        comment_rows = raw_df[first_col.str.contains('コメント', na=False)]
-        
-        if not comment_rows.empty:
-            has_comment_row = True
-            c_row_idx = comment_rows.index[-1] 
-            for col in raw_df.columns[1:]:
-                val = raw_df.at[c_row_idx, col]
-                if pd.notna(val) and str(val).strip() != "":
-                    comments_data[col] = str(val).strip()
-        
-        ignore_keywords = ['最終更新日時', 'コメント']
-        mask = ~first_col.apply(lambda x: any(x.startswith(k) for k in ignore_keywords))
-        clean_df = raw_df[mask].reset_index(drop=True)
-    else:
-        clean_df = raw_df
-        comments_data = {}
-        has_comment_row = False
-        
-    if len(clean_df.columns) > 0 and "Unnamed" in str(clean_df.columns[0]):
-        clean_df.rename(columns={clean_df.columns[0]: '日程'}, inplace=True)
-        
-    return clean_df, comments_data, has_comment_row
+@st.cache_data(show_spinner=False)
+def load_and_clean_data(file):
+    try:
+        raw_df = pd.read_csv(file)
+    except UnicodeDecodeError:
+        file.seek(0)
+        raw_df = pd.read_csv(file, encoding='cp932')
+    return raw_df
 
+@st.cache_data(show_spinner=False)
+def load_roster_data(file):
+    try:
+        roster_df = pd.read_csv(file)
+    except UnicodeDecodeError:
+        file.seek(0)
+        roster_df = pd.read_csv(file, encoding='cp932')
+    return roster_df
+
+@st.cache_data(show_spinner=False)
 def process_data_with_mapping(raw_df, name_mapping):
     if len(raw_df) > 0:
         first_col = raw_df.iloc[:, 0].astype(str).fillna("")
@@ -450,10 +442,7 @@ uploaded_file = st.file_uploader("**伝助のCSVファイル**", type=['csv'], h
 if uploaded_file is not None:
     try:
         if 'last_filename' not in st.session_state or st.session_state.last_filename != uploaded_file.name:
-            try: raw_df = pd.read_csv(uploaded_file)
-            except UnicodeDecodeError:
-                uploaded_file.seek(0)
-                raw_df = pd.read_csv(uploaded_file, encoding='cp932')
+            raw_df = load_and_clean_data(uploaded_file)
             
             cols_str = [str(c) for c in raw_df.columns]
             if '氏名' in cols_str and '学年' in cols_str:
@@ -492,10 +481,7 @@ uploaded_roster = st.file_uploader("**(任意) 部員名簿のCSVファイル**"
 if uploaded_roster is not None:
     try:
         if 'last_roster_name' not in st.session_state or st.session_state.last_roster_name != uploaded_roster.name:
-            try: roster_df = pd.read_csv(uploaded_roster)
-            except UnicodeDecodeError:
-                uploaded_roster.seek(0)
-                roster_df = pd.read_csv(uploaded_roster, encoding='cp932')
+            roster_df = load_roster_data(uploaded_roster)
             
             if '氏名' not in roster_df.columns:
                 st.error("エラー：部員名簿ではなく、伝助のCSVファイルがアップロードされた可能性があります。")
@@ -585,7 +571,7 @@ if clean_df is not None:
                 unanswered_members = sorted([m for m in roster_members_list if m not in densuke_members])
                 
                 if unknown_in_densuke:
-                    st.warning(f"⚠️ 【{len(unknown_in_densuke)}名】 **名簿に登録されていない名前が伝助に見つかりました (表記ゆれの可能性があります):**\n\n{', '.join(unknown_in_densuke)}")
+                    st.warning(f"⚠️ 【{len(unknown_in_densuke)}名】 **部員名簿に無い名前が伝助に見つかりました(表記ゆれや旧字体の可能性あり):**\n\n{', '.join(unknown_in_densuke)}")
                 if unanswered_members:
                     st.error(f"🚨 【{len(unanswered_members)}名】 **未回答者:**\n\n{', '.join(unanswered_members)}")
                 
@@ -634,8 +620,16 @@ if clean_df is not None:
                 
                 if st.session_state.name_mappings:
                     st.markdown("**🔗 現在設定されている紐付け**")
-                    for old, new in list(st.session_state.name_mappings.items()):
-                        col_btn, col_txt = st.columns([0.6, 5]) 
+                    
+                    roster_names_for_sort = [str(n).strip() for n in r_df['氏名'].tolist()]
+                    rank_map = {name: i for i, name in enumerate(roster_names_for_sort)}
+                    sorted_mappings = sorted(
+                        st.session_state.name_mappings.items(),
+                        key=lambda item: rank_map.get(item[1], 999999)
+                    )
+                    
+                    for old, new in sorted_mappings:
+                        col_btn, col_txt, col_empty = st.columns([0.6, 2.5, 6])
                         with col_btn:
                             if st.button("解除", key=f"del_map_{old}"):
                                 del st.session_state.name_mappings[old]
@@ -690,22 +684,45 @@ if clean_df is not None:
         col_min, col_max, col_empty = st.columns([1, 1, 5])
         with col_min:
             if 'global_min' not in st.session_state: st.session_state.global_min = default_bulk_min
-            # コールバック関数で個別設定も更新
             st.number_input("最小人数", min_value=0, max_value=safe_input_max, key="global_min", on_change=apply_global_settings)
         with col_max:
             if 'global_max' not in st.session_state: st.session_state.global_max = default_bulk_max
-            # コールバック関数で個別設定も更新
             st.number_input("最大人数", min_value=1, max_value=safe_input_max, key="global_max", on_change=apply_global_settings)
 
-        with st.expander("日程ごとの詳細設定", expanded=False):
-            st.write("各日程の設定を行います。チェックを外すとその日程はスキップされます。")
-            h_col1, h_col2, h_col3, h_col4, h_col5, h_col6 = st.columns([0.5, 2, 1, 1, 1, 1])
-            h_col1.markdown("**有効**")
-            h_col2.markdown("**日程**")
-            h_col3.markdown("**最小**")
-            h_col4.markdown("**最大**")
-            h_col5.markdown("**1年最小**")
-            h_col6.markdown("**1年最大**")
+        with st.expander("人数の詳細設定", expanded=False):
+            # 1. 1日しか参加できない人を特定する (ロック用)
+            mandatory_dates = {}
+            if st.session_state.clean_df is not None:
+                cdf = st.session_state.clean_df
+                d_list_check = cdf.iloc[:, 0].astype(str).str.strip().tolist()
+                for col in cdf.columns[1:]:
+                    s_series = cdf[col].astype(str).str.strip()
+                    valid_idx = s_series[s_series.isin(['○', '△'])].index
+                    if len(valid_idx) == 1:
+                        row_idx = valid_idx[0]
+                        target_date = d_list_check[row_idx]
+                        if target_date not in mandatory_dates:
+                            mandatory_dates[target_date] = []
+                        mandatory_dates[target_date].append(col)
+
+            has_roster = st.session_state.roster_df is not None
+            if has_roster:
+                st.write("各日程ごとに部員の最小・最大人数を設定できます。一年生の最小・最大人数も設定できます。チェックボックスを外すと、その日程をお稽古日から外せます。")
+                h_col1, h_col2, h_col3, h_col4, h_col5, h_col6 = st.columns([0.5, 2, 1, 1, 1, 1])
+                h_col1.markdown("**有効**")
+                h_col2.markdown("**日程**")
+                h_col3.markdown("**最小**")
+                h_col4.markdown("**最大**")
+                h_col5.markdown("**1年最小**")
+                h_col6.markdown("**1年最大**")
+            else:
+                st.write("各日程ごとに部員の最小・最大人数を設定できます。チェックボックスを外すと、その日程をお稽古日から外せます。")
+                h_col1, h_col2, h_col3, h_col4 = st.columns([0.5, 2, 1, 1])
+                h_col1.markdown("**有効**")
+                h_col2.markdown("**日程**")
+                h_col3.markdown("**最小**")
+                h_col4.markdown("**最大**")
+
             st.markdown("<hr style='margin: 0px 0px 10px 0px; padding: 0px; border-top: 1px solid rgba(49, 51, 63, 0.2);'>", unsafe_allow_html=True)
 
             dates = st.session_state.settings_df["日程"].tolist()
@@ -717,11 +734,32 @@ if clean_df is not None:
             updated_fmax = []
 
             for i, date_val in enumerate(dates):
-                c1, c2, c3, c4, c5, c6 = st.columns([0.5, 2, 1, 1, 1, 1])
+                if has_roster:
+                    c1, c2, c3, c4, c5, c6 = st.columns([0.5, 2, 1, 1, 1, 1])
+                else:
+                    c1, c2, c3, c4 = st.columns([0.5, 2, 1, 1])
                 
-                curr_enabled = bool(st.session_state.settings_df.at[i, "有効"])
+                # ロック判定
+                lock_members = mandatory_dates.get(date_val, [])
+                is_locked = (len(lock_members) > 0)
                 
-                # キーの初期値をGlobalから反映するためにsession_stateを確認
+                if is_locked:
+                    curr_enabled = True # 強制ON
+                    members_str = "、".join(lock_members)
+                    tooltip_msg = f"{members_str} さんがこの日しか参加できないため、ロックされています。"
+                    
+                    # ★修正: 鍵アイコンを削除し、ツールチップを日程の文字側に表示する
+                    new_enabled = c1.checkbox("有効", value=True, key=f"en_{i}", disabled=True, label_visibility="collapsed")
+                    
+                    # spanでツールチップ表示
+                    date_display_html = f"<span title='{tooltip_msg}' style='cursor:help; border-bottom:1px dotted #ccc;'>{date_val}</span>"
+                else:
+                    curr_enabled = bool(st.session_state.settings_df.at[i, "有効"])
+                    new_enabled = c1.checkbox("有効", value=curr_enabled, key=f"en_{i}", label_visibility="collapsed")
+                    date_display_html = f"{date_val}"
+
+                c2.markdown(f"<div style='margin-top: 5px; font-weight:bold;'>{date_display_html}</div>", unsafe_allow_html=True)
+                
                 if f"min_{i}" not in st.session_state:
                     st.session_state[f"min_{i}"] = int(st.session_state.settings_df.at[i, "最小人数"])
                 if f"max_{i}" not in st.session_state:
@@ -733,15 +771,15 @@ if clean_df is not None:
                 val_fmax = st.session_state.settings_df.at[i, "1年生最大"]
                 curr_fmax = int(val_fmax) if pd.notna(val_fmax) else None
 
-                new_enabled = c1.checkbox("有効", value=curr_enabled, key=f"en_{i}", label_visibility="collapsed")
-                c2.markdown(f"<div style='margin-top: 5px; font-weight:bold;'>{date_val}</div>", unsafe_allow_html=True)
-                
-                # セッションステートキーを指定することで、Global設定変更時にon_changeで値を書き換えられるようにする
                 new_min = c3.number_input("最小", min_value=0, max_value=safe_input_max, key=f"min_{i}", label_visibility="collapsed", disabled=not new_enabled)
                 new_max = c4.number_input("最大", min_value=1, max_value=safe_input_max, key=f"max_{i}", label_visibility="collapsed", disabled=not new_enabled)
                 
-                new_fmin = c5.number_input("1年最小", min_value=0, max_value=safe_input_max, value=curr_fmin, key=f"fmin_{i}", label_visibility="collapsed", placeholder="空", disabled=not new_enabled)
-                new_fmax = c6.number_input("1年最大", min_value=0, max_value=safe_input_max, value=curr_fmax, key=f"fmax_{i}", label_visibility="collapsed", placeholder="空", disabled=not new_enabled)
+                if has_roster:
+                    new_fmin = c5.number_input("1年最小", min_value=0, max_value=safe_input_max, value=curr_fmin, key=f"fmin_{i}", label_visibility="collapsed", placeholder="", disabled=not new_enabled)
+                    new_fmax = c6.number_input("1年最大", min_value=0, max_value=safe_input_max, value=curr_fmax, key=f"fmax_{i}", label_visibility="collapsed", placeholder="", disabled=not new_enabled)
+                else:
+                    new_fmin = None
+                    new_fmax = None
 
                 updated_enabled.append(new_enabled)
                 updated_min.append(new_min)
@@ -749,17 +787,22 @@ if clean_df is not None:
                 updated_fmin.append(new_fmin)
                 updated_fmax.append(new_fmax)
             
-            # 合計値の表示 (1年生列は空欄)
             st.markdown("<hr style='margin: 10px 0px; padding: 0px; border-top: 1px solid rgba(49, 51, 63, 0.2);'>", unsafe_allow_html=True)
             total_min = sum([m for i, m in enumerate(updated_min) if updated_enabled[i]])
             total_max = sum([m for i, m in enumerate(updated_max) if updated_enabled[i]])
 
-            t1, t2, t3, t4, t5, t6 = st.columns([0.5, 2, 1, 1, 1, 1])
-            t2.markdown("**合計** (有効分)")
-            t3.markdown(f"**{total_min}**")
-            t4.markdown(f"**{total_max}**")
-            t5.markdown("")
-            t6.markdown("")
+            if has_roster:
+                t1, t2, t3, t4, t5, t6 = st.columns([0.5, 2, 1, 1, 1, 1])
+                t2.markdown("<div style='font-size: 1.0rem; font-weight: bold; padding-top: 10px;'>合計 (有効分)</div>", unsafe_allow_html=True)
+                t3.markdown(f"<div style='font-size: 1.25rem; text-align: left; padding-left: 10px;'>{total_min}</div>", unsafe_allow_html=True)
+                t4.markdown(f"<div style='font-size: 1.25rem; text-align: left; padding-left: 10px;'>{total_max}</div>", unsafe_allow_html=True)
+                t5.markdown("")
+                t6.markdown("")
+            else:
+                t1, t2, t3, t4 = st.columns([0.5, 2, 1, 1])
+                t2.markdown("<div style='font-size: 1.0rem; font-weight: bold; padding-top: 10px;'>合計 (有効分)</div>", unsafe_allow_html=True)
+                t3.markdown(f"<div style='font-size: 1.25rem; text-align: left; padding-left: 10px;'>{total_min}</div>", unsafe_allow_html=True)
+                t4.markdown(f"<div style='font-size: 1.25rem; text-align: left; padding-left: 10px;'>{total_max}</div>", unsafe_allow_html=True)
 
         generate_clicked = st.button("🔮 お稽古生成 🔮", type="primary", use_container_width=True)
         
@@ -795,14 +838,15 @@ if clean_df is not None:
                     if updated_min[i] > updated_max[i]:
                         error_messages.append(f"【{date}】最小人数({updated_min[i]})が最大人数({updated_max[i]})を上回っています。")
                     
-                    f_min = updated_fmin[i]
-                    f_max = updated_fmax[i]
-                    if f_min is not None and f_max is not None:
-                        if int(f_min) > int(f_max):
-                            error_messages.append(f"【{date}】1年生最小({int(f_min)})が1年生最大({int(f_max)})を上回っています。")
-                    
-                    if f_min is not None and int(f_min) > updated_max[i]:
-                         error_messages.append(f"【{date}】1年生最小({int(f_min)})が最大人数({updated_max[i]})を上回っています。")
+                    if has_roster:
+                        f_min = updated_fmin[i]
+                        f_max = updated_fmax[i]
+                        if f_min is not None and f_max is not None:
+                            if int(f_min) > int(f_max):
+                                error_messages.append(f"【{date}】1年生最小({int(f_min)})が1年生最大({int(f_max)})を上回っています。")
+                        
+                        if f_min is not None and int(f_min) > updated_max[i]:
+                            error_messages.append(f"【{date}】1年生最小({int(f_min)})が最大人数({updated_max[i]})を上回っています。")
 
             if error_messages:
                 for msg in error_messages:
@@ -1096,7 +1140,7 @@ if clean_df is not None:
 
             st.write(""); st.write("")
             st.subheader("お稽古プレビュー")
-            st.write("""下のテキストボックスの右上部分をクリックすることで、お稽古のテキストをコピーすることができます。
+            st.write("""下のテキストボックスの右上部分をクリックすると、お稽古のテキストをコピーできます。
 
 ※(△)について、伝助のコメントを確認し、「遅れ」もしくは「早退」に書き換えた上でご利用ください。""")
             text_output = ""
@@ -1116,7 +1160,7 @@ if clean_df is not None:
             st.code(text_output, language='text')
             
             st.write(""); st.write("")
-            st.subheader("伝助コメント欄")
+            st.subheader("伝助コメント")
             
             if not st.session_state.has_comment_row:
                 st.warning("※ 伝助のCSVファイルにコメントの行が存在しませんでした")
@@ -1153,4 +1197,4 @@ if clean_df is not None:
             
             st.write(""); st.write("")
             st.subheader("メモ")
-            st.text_area("自由にメモを残せます", key="memo_text", height=400)
+            st.text_area("メモを残したり、お稽古のテキストの体裁を整えたりするのにどうぞ。", key="memo_text", height=400)
