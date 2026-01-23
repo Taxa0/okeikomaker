@@ -119,7 +119,7 @@ components.html(js_code, height=0, width=0)
 
 st.markdown("""
 <style>
-    /* ★修正: 全体の余白 (下に100pxの余裕を作成) */
+    /* 全体の余白 (下に100pxの余裕を作成) */
     .block-container { 
         padding-top: 3rem; 
         padding-bottom: 100px !important; 
@@ -217,6 +217,11 @@ st.markdown("""
         display: none;
     }
 
+    /* 数値入力のラベル（最小・最大）を太字に */
+    div[data-testid="stNumberInput"] label p {
+        font-weight: bold !important;
+    }
+
     /* 数値入力ボックスのフォントサイズを大きく */
     div[data-testid="stNumberInput"] input {
         font-size: 1.25rem !important;
@@ -231,6 +236,12 @@ st.markdown("""
     div[data-testid="stNumberInput"] input[aria-label*="最大"] {
         background-color: #ffcdd2 !important;
         color: black !important;
+    }
+
+    /* チェックボックスの位置調整 (8pxに戻す) */
+    div[data-testid="stCheckbox"] {
+        margin-top: 8px !important;
+        min-height: 0px !important;
     }
 
     /* チェックボックスのヘルプアイコンの位置調整 */
@@ -470,19 +481,20 @@ if uploaded_file is not None:
     except Exception as e:
         st.error(f"ファイル読み込みエラー: {e}")
 
-help_text_roster = """部員名簿のアップロードは以下のメリットがあるため強く推奨します。
-
+# ★修正: 行末に半角スペース2つを入れて改行を強制
+help_text_roster = """以下のメリットより、部員名簿のアップロードを強く推奨します。  
 ・伝助未回答の部員が一目で分かる  
-・お稽古を組む際に、同じ日程に同じ学年の部員が入りづらくなる  
-・お稽古の部員の名前の順番が、自動で学年順になる  
+・お稽古を生成する際に、同じ日程に同じ学年の部員が入りづらくなる  
+・お稽古の部員の名前の順番が自動で学年順になる  
+・一年生の最大・最小人数を設定できるようになる  
 ・部員名簿の3列目にお稽古カウンターが存在する場合、お稽古編集時にそのお稽古カウンターを名前の右に表示できる  
 
 部員名簿の形式について  
-一列目:氏名  
-二列目:学年  
-三列目(任意):付加情報(お稽古カウンター等)  
-例: 森下,6(6年生の森下さん)  
-山田,4,7(4年生のお稽古カウンターが7回の山田さん)"""
+一列目:氏名、二列目:学年、三列目(任意):付加情報(お稽古カウンター等)  
+
+例:  
+森下,6 (6年生の森下さん)  
+山田,4,7 (4年生のお稽古カウンターが7回の山田さん)"""
 
 uploaded_roster = st.file_uploader("**(任意) 部員名簿のCSVファイル**", type=['csv'], key="roster", help=help_text_roster)
 
@@ -576,23 +588,28 @@ if clean_df is not None:
                 roster_members_list = [str(n).strip() for n in r_df['氏名'].tolist()]
                 
                 unknown_in_densuke = sorted([m for m in densuke_members if m not in roster_members_list])
-                unanswered_members = sorted([m for m in roster_members_list if m not in densuke_members])
+                # ★修正: 未回答者は名簿順に表示 (ソートしない)
+                unanswered_members = [m for m in roster_members_list if m not in densuke_members]
                 
+                # ★修正: 警告文の太字を解除
                 if unknown_in_densuke:
-                    st.warning(f"⚠️ 【{len(unknown_in_densuke)}名】 **部員名簿に無い名前が伝助に見つかりました(表記ゆれや旧字体の可能性あり):**\n\n{', '.join(unknown_in_densuke)}")
+                    st.warning(f"【{len(unknown_in_densuke)}名】 部員名簿に無い名前が伝助に見つかりました(表記ゆれや旧字体、重複の可能性あり):\n\n{', '.join(unknown_in_densuke)}")
                 
                 if unknown_in_densuke and unanswered_members:
-                    st.markdown("**「部員名簿に無い名前」を部員名簿と紐付けする**")
-                    
-                    if st.session_state.mapping_source_selected:
-                        st.error(f"選択中: **{st.session_state.mapping_source_selected}** → 右側から対応する名前をクリックしてください", icon="✏️")
-                    else:
-                        st.info("まずは左側から紐付けしたい名前を選んでください 👇")
+                    col_map_msg_L, col_map_msg_R = st.columns([1, 1.5])
+                    with col_map_msg_L:
+                        st.markdown("**「部員名簿に無い名前」を部員名簿と紐付けする**")
+                    with col_map_msg_R:
+                        if st.session_state.mapping_source_selected:
+                            st.error(f"選択中: **{st.session_state.mapping_source_selected}** → 右側から対応する名前をクリックしてください", icon="✏️")
+                        else:
+                            # ★修正: 絵文字を削除
+                            st.info("まずは左側から紐付けしたい名前を選んでください")
 
                     col_map_L, col_map_R = st.columns(2)
                     
                     with col_map_L:
-                        st.markdown("###### 部員名簿に無い名前")
+                        st.markdown("部員名簿に無い名前")
                         for unk_name in unknown_in_densuke:
                             label = unk_name
                             if st.session_state.mapping_source_selected == unk_name:
@@ -606,7 +623,7 @@ if clean_df is not None:
                                 st.rerun()
 
                     with col_map_R:
-                        st.markdown("###### 部員名簿")
+                        st.markdown("部員名簿")
                         for mis_name in unanswered_members:
                             if st.button(mis_name, key=f"tgt_{mis_name}", use_container_width=True):
                                 if st.session_state.mapping_source_selected:
@@ -624,7 +641,7 @@ if clean_df is not None:
                                     st.rerun()
                 
                 if st.session_state.name_mappings:
-                    st.markdown("**🔗 現在設定されている紐付け**")
+                    st.markdown("**設定された紐付け**")
                     
                     roster_names_for_sort = [str(n).strip() for n in r_df['氏名'].tolist()]
                     rank_map = {name: i for i, name in enumerate(roster_names_for_sort)}
@@ -652,8 +669,9 @@ if clean_df is not None:
                 if has_mapping_context and unanswered_members:
                      st.markdown("<hr style='margin: 10px 0px; border-top: 1px solid rgba(49, 51, 63, 0.2);'>", unsafe_allow_html=True)
 
+                # ★修正: エラーメッセージの太字を解除
                 if unanswered_members:
-                    st.error(f"🚨 【{len(unanswered_members)}名】 **未回答者:**\n\n{', '.join(unanswered_members)}")
+                    st.error(f"【{len(unanswered_members)}名】 未回答者:\n\n{', '.join(unanswered_members)}")
 
                 for _, row in r_df.iterrows():
                     name = str(row.get('氏名', '')).strip()
@@ -721,7 +739,8 @@ if clean_df is not None:
             if has_roster:
                 st.write("各日程ごとに部員の最小・最大人数を設定できます。一年生の最小・最大人数も設定できます。チェックボックスを外すと、その日程をお稽古日から外せます。")
                 h_col1, h_col2, h_col3, h_col4, h_col5, h_col6 = st.columns([0.5, 2, 1, 1, 1, 1])
-                h_col1.markdown("**有効**")
+                # ★修正: 「有効」の文字を削除
+                h_col1.write("")
                 h_col2.markdown("**日程**")
                 h_col3.markdown("**最小**")
                 h_col4.markdown("**最大**")
@@ -730,7 +749,8 @@ if clean_df is not None:
             else:
                 st.write("各日程ごとに部員の最小・最大人数を設定できます。チェックボックスを外すと、その日程をお稽古日から外せます。")
                 h_col1, h_col2, h_col3, h_col4 = st.columns([0.5, 2, 1, 1])
-                h_col1.markdown("**有効**")
+                # ★修正: 「有効」の文字を削除
+                h_col1.write("")
                 h_col2.markdown("**日程**")
                 h_col3.markdown("**最小**")
                 h_col4.markdown("**最大**")
@@ -761,13 +781,15 @@ if clean_df is not None:
                     tooltip_msg = f"{members_str} さんがこの日しか参加できないため、ロックされています。"
                     
                     new_enabled = c1.checkbox(" ", value=True, key=f"en_{i}", disabled=True, label_visibility="visible", help=tooltip_msg)
+                    # ★修正: 日程テキストの下線を削除
                     date_display_html = f"{date_val}"
                 else:
                     curr_enabled = bool(st.session_state.settings_df.at[i, "有効"])
                     new_enabled = c1.checkbox("有効", value=curr_enabled, key=f"en_{i}", label_visibility="collapsed")
                     date_display_html = f"{date_val}"
 
-                c2.markdown(f"<div style='margin-top: 5px; font-weight:bold;'>{date_display_html}</div>", unsafe_allow_html=True)
+                # ★修正: 日程テキストを垂直センタリング (Flexbox) -> padding-top: 7px
+                c2.markdown(f"<div style='padding-top: 7px; font-weight: bold;'>{date_display_html}</div>", unsafe_allow_html=True)
                 
                 if f"min_{i}" not in st.session_state:
                     st.session_state[f"min_{i}"] = int(st.session_state.settings_df.at[i, "最小人数"])
@@ -803,16 +825,22 @@ if clean_df is not None:
 
             if has_roster:
                 t1, t2, t3, t4, t5, t6 = st.columns([0.5, 2, 1, 1, 1, 1])
-                t2.markdown("<div style='font-size: 1.0rem; font-weight: bold; padding-top: 10px;'>合計 (有効分)</div>", unsafe_allow_html=True)
-                t3.markdown(f"<div style='font-size: 1.25rem; text-align: left; padding-left: 10px;'>{total_min}</div>", unsafe_allow_html=True)
-                t4.markdown(f"<div style='font-size: 1.25rem; text-align: left; padding-left: 10px;'>{total_max}</div>", unsafe_allow_html=True)
+                t2.markdown("<div style='font-size: 1.0rem; font-weight: bold; padding-top: 10px;'>合計</div>", unsafe_allow_html=True)
+                # ★修正: padding-top: 3pxで微調整
+                t3.markdown(f"<div style='font-size: 1.25rem; text-align: left; padding-left: 10px; padding-top: 3px;'>{total_min}</div>", unsafe_allow_html=True)
+                t4.markdown(f"<div style='font-size: 1.25rem; text-align: left; padding-left: 10px; padding-top: 3px;'>{total_max}</div>", unsafe_allow_html=True)
                 t5.markdown("")
                 t6.markdown("")
             else:
                 t1, t2, t3, t4 = st.columns([0.5, 2, 1, 1])
-                t2.markdown("<div style='font-size: 1.0rem; font-weight: bold; padding-top: 10px;'>合計 (有効分)</div>", unsafe_allow_html=True)
-                t3.markdown(f"<div style='font-size: 1.25rem; text-align: left; padding-left: 10px;'>{total_min}</div>", unsafe_allow_html=True)
-                t4.markdown(f"<div style='font-size: 1.25rem; text-align: left; padding-left: 10px;'>{total_max}</div>", unsafe_allow_html=True)
+                t2.markdown("<div style='font-size: 1.0rem; font-weight: bold; padding-top: 10px;'>合計</div>", unsafe_allow_html=True)
+                # ★修正: padding-top: 3pxで微調整
+                t3.markdown(f"<div style='font-size: 1.25rem; text-align: left; padding-left: 10px; padding-top: 3px;'>{total_min}</div>", unsafe_allow_html=True)
+                t4.markdown(f"<div style='font-size: 1.25rem; text-align: left; padding-left: 10px; padding-top: 3px;'>{total_max}</div>", unsafe_allow_html=True)
+            
+            # ★修正: 余白を追加
+            st.write("")
+            st.write("")
 
         generate_clicked = st.button("🔮 お稽古生成 🔮", type="primary", use_container_width=True)
         
@@ -1139,14 +1167,17 @@ if clean_df is not None:
                     'settings_df': st.session_state.settings_df,
                     'comments_data': st.session_state.comments_data,
                     'has_comment_row': st.session_state.has_comment_row,
-                    'memo_text': st.session_state.memo_text
+                    'memo_text': st.session_state.memo_text,
+                    'name_mappings': st.session_state.name_mappings,
+                    'raw_df': st.session_state.raw_df
                 }
                 buffer_temp = io.BytesIO()
                 pickle.dump(save_data_temp, buffer_temp)
                 today_str = datetime.now().strftime('%Y%m%d')
                 file_name_temp = f"{today_str}_backup.okeiko"
                 
-                st.download_button("💾 作業を保存", data=buffer_temp, file_name=file_name_temp, mime="application/octet-stream", use_container_width=True)
+                # ★修正: ボタンラベルから絵文字を削除
+                st.download_button("作業を保存", data=buffer_temp, file_name=file_name_temp, mime="application/octet-stream", use_container_width=True)
 
             st.write(""); st.write("")
             st.subheader("お稽古プレビュー")
@@ -1207,4 +1238,4 @@ if clean_df is not None:
             
             st.write(""); st.write("")
             st.subheader("メモ")
-            st.text_area("メモを残したり、お稽古のテキストの体裁を整えたりするのにどうぞ。", key="memo_text", height=400)
+            st.text_area("メモを残したり、お稽古のテキストの体裁を整えたりするのにどうぞ。", key="memo_text", height=500)
