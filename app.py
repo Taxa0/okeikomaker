@@ -119,8 +119,11 @@ components.html(js_code, height=0, width=0)
 
 st.markdown("""
 <style>
-    /* 全体の余白 */
-    .block-container { padding-top: 3rem; padding-bottom: 2rem; }
+    /* ★修正: 全体の余白 (下に100pxの余裕を作成) */
+    .block-container { 
+        padding-top: 3rem; 
+        padding-bottom: 100px !important; 
+    }
     div[data-testid="stVerticalBlock"] > div { gap: 0rem !important; }
     div[data-testid="column"] { padding: 0px !important; }
     
@@ -228,6 +231,11 @@ st.markdown("""
     div[data-testid="stNumberInput"] input[aria-label*="最大"] {
         background-color: #ffcdd2 !important;
         color: black !important;
+    }
+
+    /* チェックボックスのヘルプアイコンの位置調整 */
+    div[data-testid="stCheckbox"] [data-testid="stTooltipIcon"] {
+        transform: translateY(4px);
     }
 </style>
 """, unsafe_allow_html=True)
@@ -572,22 +580,19 @@ if clean_df is not None:
                 
                 if unknown_in_densuke:
                     st.warning(f"⚠️ 【{len(unknown_in_densuke)}名】 **部員名簿に無い名前が伝助に見つかりました(表記ゆれや旧字体の可能性あり):**\n\n{', '.join(unknown_in_densuke)}")
-                if unanswered_members:
-                    st.error(f"🚨 【{len(unanswered_members)}名】 **未回答者:**\n\n{', '.join(unanswered_members)}")
                 
                 if unknown_in_densuke and unanswered_members:
-                    st.markdown("**🔄 表記ゆれの手動修正 (名前の紐付け)**")
-                    st.caption("左側の「伝助の名前」を選択してから、右側の「正しい名前(名簿)」をクリックすると統合されます。")
+                    st.markdown("**「部員名簿に無い名前」を部員名簿と紐付けする**")
                     
                     if st.session_state.mapping_source_selected:
-                        st.error(f"選択中: **{st.session_state.mapping_source_selected}** → 右側から正しい名前をクリックしてください", icon="✏️")
+                        st.error(f"選択中: **{st.session_state.mapping_source_selected}** → 右側から対応する名前をクリックしてください", icon="✏️")
                     else:
-                        st.info("まずは左側から修正したい名前を選んでください 👇")
+                        st.info("まずは左側から紐付けしたい名前を選んでください 👇")
 
                     col_map_L, col_map_R = st.columns(2)
                     
                     with col_map_L:
-                        st.markdown("###### 伝助のみに存在 (表記ゆれ?)")
+                        st.markdown("###### 部員名簿に無い名前")
                         for unk_name in unknown_in_densuke:
                             label = unk_name
                             if st.session_state.mapping_source_selected == unk_name:
@@ -601,7 +606,7 @@ if clean_df is not None:
                                 st.rerun()
 
                     with col_map_R:
-                        st.markdown("###### 名簿のみに存在 (未回答)")
+                        st.markdown("###### 部員名簿")
                         for mis_name in unanswered_members:
                             if st.button(mis_name, key=f"tgt_{mis_name}", use_container_width=True):
                                 if st.session_state.mapping_source_selected:
@@ -642,6 +647,13 @@ if clean_df is not None:
                                 st.rerun()
                         with col_txt:
                             st.markdown(f"<div style='line-height: 34px;'>{old} ➡ {new}</div>", unsafe_allow_html=True)
+                
+                has_mapping_context = (len(unknown_in_densuke) > 0) or (len(st.session_state.name_mappings) > 0)
+                if has_mapping_context and unanswered_members:
+                     st.markdown("<hr style='margin: 10px 0px; border-top: 1px solid rgba(49, 51, 63, 0.2);'>", unsafe_allow_html=True)
+
+                if unanswered_members:
+                    st.error(f"🚨 【{len(unanswered_members)}名】 **未回答者:**\n\n{', '.join(unanswered_members)}")
 
                 for _, row in r_df.iterrows():
                     name = str(row.get('氏名', '')).strip()
@@ -748,11 +760,8 @@ if clean_df is not None:
                     members_str = "、".join(lock_members)
                     tooltip_msg = f"{members_str} さんがこの日しか参加できないため、ロックされています。"
                     
-                    # ★修正: 鍵アイコンを削除し、ツールチップを日程の文字側に表示する
-                    new_enabled = c1.checkbox("有効", value=True, key=f"en_{i}", disabled=True, label_visibility="collapsed")
-                    
-                    # spanでツールチップ表示
-                    date_display_html = f"<span title='{tooltip_msg}' style='cursor:help; border-bottom:1px dotted #ccc;'>{date_val}</span>"
+                    new_enabled = c1.checkbox(" ", value=True, key=f"en_{i}", disabled=True, label_visibility="visible", help=tooltip_msg)
+                    date_display_html = f"{date_val}"
                 else:
                     curr_enabled = bool(st.session_state.settings_df.at[i, "有効"])
                     new_enabled = c1.checkbox("有効", value=curr_enabled, key=f"en_{i}", label_visibility="collapsed")
@@ -775,6 +784,7 @@ if clean_df is not None:
                 new_max = c4.number_input("最大", min_value=1, max_value=safe_input_max, key=f"max_{i}", label_visibility="collapsed", disabled=not new_enabled)
                 
                 if has_roster:
+                    # placeholderを空文字に変更
                     new_fmin = c5.number_input("1年最小", min_value=0, max_value=safe_input_max, value=curr_fmin, key=f"fmin_{i}", label_visibility="collapsed", placeholder="", disabled=not new_enabled)
                     new_fmax = c6.number_input("1年最大", min_value=0, max_value=safe_input_max, value=curr_fmax, key=f"fmax_{i}", label_visibility="collapsed", placeholder="", disabled=not new_enabled)
                 else:
