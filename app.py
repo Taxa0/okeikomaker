@@ -238,7 +238,7 @@ st.markdown("""
         color: black !important;
     }
 
-    /* チェックボックスの位置調整 (8pxに戻す) */
+    /* チェックボックスの位置調整 (8px) */
     div[data-testid="stCheckbox"] {
         margin-top: 8px !important;
         min-height: 0px !important;
@@ -514,7 +514,11 @@ if uploaded_roster is not None:
 
 st.write("")
 with st.expander("保存した作業を再開"):
-    uploaded_resume = st.file_uploader("**バックアップファイル (.okeiko)**", type=['okeiko'], key="resume_uploader")
+    # ★修正: iPad用注意書きの追加
+    help_text_resume = """※iPadの場合、"Browse files"をタップしても.okeikoファイルを選択できません。
+画面にブラウザとファイルアプリを同時に開き、ファイルアプリで.okeikoファイルを長押しして、ブラウザにドラッグアンドドロップすることでアップロードできます。"""
+    uploaded_resume = st.file_uploader("**バックアップファイル (.okeiko)**", type=['okeiko'], key="resume_uploader", help=help_text_resume)
+    
     if uploaded_resume is not None:
         if st.session_state.loaded_resume_name != uploaded_resume.name:
             try:
@@ -591,7 +595,7 @@ if clean_df is not None:
                 # ★修正: 未回答者は名簿順に表示 (ソートしない)
                 unanswered_members = [m for m in roster_members_list if m not in densuke_members]
                 
-                # ★修正: 警告文の太字を解除
+                # ★修正: 警告文の太字解除、絵文字削除済み
                 if unknown_in_densuke:
                     st.warning(f"【{len(unknown_in_densuke)}名】 部員名簿に無い名前が伝助に見つかりました(表記ゆれや旧字体、重複の可能性あり):\n\n{', '.join(unknown_in_densuke)}")
                 
@@ -603,7 +607,7 @@ if clean_df is not None:
                         if st.session_state.mapping_source_selected:
                             st.error(f"選択中: **{st.session_state.mapping_source_selected}** → 右側から対応する名前をクリックしてください", icon="✏️")
                         else:
-                            # ★修正: 絵文字を削除
+                            # ★修正: 絵文字削除
                             st.info("まずは左側から紐付けしたい名前を選んでください")
 
                     col_map_L, col_map_R = st.columns(2)
@@ -669,7 +673,7 @@ if clean_df is not None:
                 if has_mapping_context and unanswered_members:
                      st.markdown("<hr style='margin: 10px 0px; border-top: 1px solid rgba(49, 51, 63, 0.2);'>", unsafe_allow_html=True)
 
-                # ★修正: エラーメッセージの太字を解除
+                # ★修正: エラーメッセージの太字解除
                 if unanswered_members:
                     st.error(f"【{len(unanswered_members)}名】 未回答者:\n\n{', '.join(unanswered_members)}")
 
