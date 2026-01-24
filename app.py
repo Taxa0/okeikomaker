@@ -6,6 +6,8 @@ import html as html_lib
 import pickle
 import io
 from datetime import datetime
+from collections import defaultdict
+import math
 
 # ==========================================
 # ページ設定
@@ -57,12 +59,14 @@ js_code = """
                         btn.style.setProperty('color', 'black', 'important');
                         btn.style.setProperty('border-color', '#ffc107', 'important');
                     } else {
+                        // 緑色 (移動可能)
                         btn.style.setProperty('background-color', '#28a745', 'important'); // 緑
                         btn.style.setProperty('color', 'white', 'important');
                         btn.style.setProperty('border-color', '#28a745', 'important');
                     }
                 } 
                 else if (text.includes('\\u200b')) {
+                    // 赤色
                     btn.style.setProperty('background-color', '#ff4b4b', 'important'); // 赤
                     btn.style.setProperty('color', 'white', 'important');
                     btn.style.setProperty('border-color', '#ff4b4b', 'important');
@@ -130,7 +134,7 @@ js_code = """
     // 監視設定
     const observer = new MutationObserver(() => { applyStyles(); });
     observer.observe(window.parent.document.body, { childList: true, subtree: true });
-    setInterval(applyStyles, 200);
+    setInterval(applyStyles, 300);
     applyStyles();
 </script>
 """
@@ -283,10 +287,81 @@ def apply_global_settings():
             st.session_state[f"max_{i}"] = val_max
 
 def get_circle_number(n):
-    """1~20の数値を丸数字に変換する"""
-    if 1 <= n <= 20:
-        return chr(0x2460 + n - 1)
+    if 1 <= n <= 20: return chr(0x2460 + n - 1)
     return f"({n})"
+
+def update_static_caches():
+    """
+    clean_dfが変更されたときに一度だけ実行し、
+    編集中に変わらない情報(status_map, valid_dates)を計算してsession_stateに保存する。
+    """
+    if st.session_state.clean_df is None:
+        return
+        
+    df = st.session_state.clean_df
+    members_list = df.columns[1:].tolist()
+    
+    # status_map: {(date, member): status}
+    status_map = {}
+    date_col_vals = df.iloc[:, 0].astype(str).str.strip().tolist()
+    for m in members_list:
+        m_vals = df[m].astype(str).str.strip().tolist()
+        for d_val, s_val in zip(date_col_vals, m_vals):
+            if s_val in ['○', '△']:
+                status_map[(d_val, m)] = s_val
+    
+    # valid_dates: {member: {d1, d2...}}
+    valid_dates_for_member = {}
+    for m in members_list:
+        s_series = df[m].astype(str).str.strip()
+        valid_days_bool = s_series.isin(['○', '△']).tolist()
+        valid_set = {d for d, is_valid in zip(date_col_vals, valid_days_bool) if is_valid}
+        valid_dates_for_member[m] = valid_set
+
+    st.session_state.status_map_cache = status_map
+    st.session_state.valid_dates_cache = valid_dates_for_member
+
+def refresh_editor_cache(current_df):
+    """
+    お稽古表(current_df)が変更されたときに実行し、表示用の辞書を一括更新する
+    """
+    if current_df is None: return
+
+    # 1. 登場回数カウント & 表示名マップ
+    display_name_map = {}
+    member_appearances = defaultdict(list)
+    curr_dates = current_df["日程"].tolist()
+    curr_assigns = current_df["担当者"].fillna("").astype(str).tolist()
+    
+    # 2. 現在のシフト状況（重複チェック用）
+    current_assignments_map = {} 
+
+    for d, assigned_str in zip(curr_dates, curr_assigns):
+        if assigned_str:
+            m_list = assigned_str.split(", ")
+            current_assignments_map[d] = set(m_list)
+            for m in m_list:
+                member_appearances[m].append(d)
+        else:
+            current_assignments_map[d] = set()
+            
+    # 日付順ランク
+    all_dates = st.session_state.settings_df["日程"].tolist()
+    date_rank_map = {d: i for i, d in enumerate(all_dates)}
+
+    for member, dates in member_appearances.items():
+        if len(dates) > 1:
+            dates.sort(key=lambda d: date_rank_map.get(d, 99999))
+            for i, d in enumerate(dates):
+                display_name_map[(member, d)] = f"{member}{get_circle_number(i+1)}"
+        else:
+            if dates: display_name_map[(member, dates[0])] = member
+            
+    st.session_state.editor_cache = {
+        'display_name_map': display_name_map,
+        'current_assignments_map': current_assignments_map,
+        'date_to_row': {row['日程']: idx for idx, row in current_df.iterrows()}
+    }
 
 @st.cache_data(show_spinner=False)
 def load_and_clean_data(file):
@@ -517,6 +592,9 @@ if 'confirm_overwrite' not in st.session_state: st.session_state.confirm_overwri
 if 'confirm_reset' not in st.session_state: st.session_state.confirm_reset = False
 if 'memo_text' not in st.session_state: st.session_state.memo_text = ""
 if 'member_targets' not in st.session_state: st.session_state.member_targets = {}
+if 'status_map_cache' not in st.session_state: st.session_state.status_map_cache = {}
+if 'valid_dates_cache' not in st.session_state: st.session_state.valid_dates_cache = {}
+if 'editor_cache' not in st.session_state: st.session_state.editor_cache = {}
 
 # --- 手順1 (読み込み) ---
 st.markdown("### 1. アップロード")
@@ -548,6 +626,7 @@ if uploaded_file is not None:
                 st.session_state.last_filename = uploaded_file.name
                 st.session_state.shift_result = None
                 st.session_state.member_targets = {}
+                update_static_caches()
                 st.rerun()
             
     except Exception as e:
@@ -608,6 +687,8 @@ with st.expander("保存した作業を再開"):
                 st.session_state.confirm_overwrite = False
                 st.session_state.confirm_reset = False
                 
+                update_static_caches() 
+                refresh_editor_cache(st.session_state.shift_result)
                 st.success("作業データを復元しました。")
                 st.rerun()
             except Exception as e:
@@ -708,6 +789,7 @@ if clean_df is not None:
                                         st.session_state.comments_data = comments_data
                                         st.session_state.has_comment_row = has_comment_row
                                         st.session_state.shift_result = None 
+                                        update_static_caches()
                                     st.success(f"{src} を {mis_name} として統合しました")
                                     st.rerun()
                 
@@ -732,6 +814,7 @@ if clean_df is not None:
                                     st.session_state.comments_data = comments_data
                                     st.session_state.has_comment_row = has_comment_row
                                     st.session_state.shift_result = None
+                                    update_static_caches()
                                 st.rerun()
                         with col_txt:
                             st.markdown(f"<div style='line-height: 34px;'>{old} ➡ {new}</div>", unsafe_allow_html=True)
@@ -790,16 +873,15 @@ if clean_df is not None:
             st.number_input("最大人数", min_value=1, max_value=safe_input_max, key="global_max", on_change=apply_global_settings)
 
         with st.expander("人数の詳細設定", expanded=False):
+            # 高速化: 1日しか参加できない人の特定を一括処理
             mandatory_dates = {}
             if st.session_state.clean_df is not None:
-                cdf = st.session_state.clean_df
-                d_list_check = cdf.iloc[:, 0].astype(str).str.strip().tolist()
-                for col in cdf.columns[1:]:
-                    s_series = cdf[col].astype(str).str.strip()
-                    valid_idx = s_series[s_series.isin(['○', '△'])].index
-                    if len(valid_idx) == 1:
-                        row_idx = valid_idx[0]
-                        target_date = d_list_check[row_idx]
+                dates = st.session_state.clean_df.iloc[:, 0].astype(str).str.strip().tolist()
+                for col in st.session_state.clean_df.columns[1:]:
+                    s_series = st.session_state.clean_df[col].astype(str).str.strip()
+                    valid_indices = [i for i, x in enumerate(s_series) if x in ['○', '△']]
+                    if len(valid_indices) == 1:
+                        target_date = dates[valid_indices[0]]
                         if target_date not in mandatory_dates:
                             mandatory_dates[target_date] = []
                         mandatory_dates[target_date].append(col)
@@ -846,7 +928,6 @@ if clean_df is not None:
                     curr_enabled = True
                     members_str = "、".join(lock_members)
                     tooltip_msg = f"{members_str} さんがこの日しか参加できないため、ロックされています。"
-                    
                     new_enabled = c1.checkbox(" ", value=True, key=f"en_{i}", disabled=True, label_visibility="visible", help=tooltip_msg)
                     date_display_html = f"{date_val}"
                 else:
@@ -856,14 +937,11 @@ if clean_df is not None:
 
                 c2.markdown(f"<div style='padding-top: 7px; font-weight: bold;'>{date_display_html}</div>", unsafe_allow_html=True)
                 
-                if f"min_{i}" not in st.session_state:
-                    st.session_state[f"min_{i}"] = int(st.session_state.settings_df.at[i, "最小人数"])
-                if f"max_{i}" not in st.session_state:
-                    st.session_state[f"max_{i}"] = int(st.session_state.settings_df.at[i, "最大人数"])
+                if f"min_{i}" not in st.session_state: st.session_state[f"min_{i}"] = int(st.session_state.settings_df.at[i, "最小人数"])
+                if f"max_{i}" not in st.session_state: st.session_state[f"max_{i}"] = int(st.session_state.settings_df.at[i, "最大人数"])
                 
                 val_fmin = st.session_state.settings_df.at[i, "1年生最小"]
                 curr_fmin = int(val_fmin) if pd.notna(val_fmin) else None
-                
                 val_fmax = st.session_state.settings_df.at[i, "1年生最大"]
                 curr_fmax = int(val_fmax) if pd.notna(val_fmax) else None
 
@@ -892,23 +970,26 @@ if clean_df is not None:
                 t2.markdown("<div style='font-size: 1.0rem; font-weight: bold; padding-top: 10px;'>合計</div>", unsafe_allow_html=True)
                 t3.markdown(f"<div style='font-size: 1.25rem; text-align: left; padding-left: 10px; padding-top: 3px;'>{total_min}</div>", unsafe_allow_html=True)
                 t4.markdown(f"<div style='font-size: 1.25rem; text-align: left; padding-left: 10px; padding-top: 3px;'>{total_max}</div>", unsafe_allow_html=True)
-                t5.markdown("")
-                t6.markdown("")
             else:
                 t1, t2, t3, t4 = st.columns([0.5, 2, 1, 1])
                 t2.markdown("<div style='font-size: 1.0rem; font-weight: bold; padding-top: 10px;'>合計</div>", unsafe_allow_html=True)
                 t3.markdown(f"<div style='font-size: 1.25rem; text-align: left; padding-left: 10px; padding-top: 3px;'>{total_min}</div>", unsafe_allow_html=True)
                 t4.markdown(f"<div style='font-size: 1.25rem; text-align: left; padding-left: 10px; padding-top: 3px;'>{total_max}</div>", unsafe_allow_html=True)
             
-            st.write("")
-            st.write("")
+            st.write(""); st.write("")
 
         with st.expander("二回以上参加する部員が存在する場合", expanded=False):
             st.write("デフォルトでは全員一回のみ参加する設定です。以下の設定から、個別に参加回数を変更できます。")
-
             sorted_attendees = sort_members_by_roster(attendees, st.session_state.roster_df)
             
-            c_h1, c_h2, c_h3, c_h4 = st.columns([2, 1.5, 1.5, 3])
+            # 学年マップ作成 (高速化)
+            name_grade_map = {}
+            if st.session_state.roster_df is not None:
+                for _, r in st.session_state.roster_df.iterrows():
+                    name_grade_map[str(r['氏名']).strip()] = str(r['学年']).strip()
+
+            c_h0, c_h1, c_h2, c_h3, c_h4 = st.columns([0.8, 2, 1.5, 1.5, 2.2])
+            c_h0.markdown("**学年**")
             c_h1.markdown("**氏名**")
             c_h2.markdown("**参加可能候補日数**")
             c_h3.markdown("**参加回数**")
@@ -917,8 +998,10 @@ if clean_df is not None:
             
             new_targets = {}
             for member in sorted_attendees:
-                c1, c2, c3, c4 = st.columns([2, 1.5, 1.5, 3])
+                c0, c1, c2, c3, c4 = st.columns([0.8, 2, 1.5, 1.5, 2.2])
                 
+                grade = name_grade_map.get(member, "-")
+                c0.markdown(f"<div style='margin-top: 5px;'>{grade}</div>", unsafe_allow_html=True)
                 c1.markdown(f"<div style='margin-top: 5px;'>{member}</div>", unsafe_allow_html=True)
                 
                 s_series = clean_df[member].astype(str).str.strip()
@@ -935,7 +1018,6 @@ if clean_df is not None:
                     label_visibility="collapsed"
                 )
                 new_targets[member] = new_target
-            
             st.session_state.member_targets = new_targets
 
         generate_clicked = st.button("🔮 お稽古生成 🔮", type="primary", use_container_width=True)
@@ -946,7 +1028,6 @@ if clean_df is not None:
             st.session_state.settings_df["最大人数"] = updated_max
             st.session_state.settings_df["1年生最小"] = updated_fmin
             st.session_state.settings_df["1年生最大"] = updated_fmax
-            
             dates = st.session_state.settings_df["日程"].tolist()
             
             calc_min_l = []
@@ -971,16 +1052,12 @@ if clean_df is not None:
                 if updated_enabled[i]:
                     if updated_min[i] > updated_max[i]:
                         error_messages.append(f"【{date}】最小人数({updated_min[i]})が最大人数({updated_max[i]})を上回っています。")
-                    
                     if has_roster:
                         f_min = updated_fmin[i]
                         f_max = updated_fmax[i]
                         if f_min is not None and f_max is not None:
-                            if int(f_min) > int(f_max):
-                                error_messages.append(f"【{date}】1年生最小({int(f_min)})が1年生最大({int(f_max)})を上回っています。")
-                        
-                        if f_min is not None and int(f_min) > updated_max[i]:
-                            error_messages.append(f"【{date}】1年生最小({int(f_min)})が最大人数({updated_max[i]})を上回っています。")
+                            if int(f_min) > int(f_max): error_messages.append(f"【{date}】1年生最小({int(f_min)})が1年生最大({int(f_max)})を上回っています。")
+                        if f_min is not None and int(f_min) > updated_max[i]: error_messages.append(f"【{date}】1年生最小({int(f_min)})が最大人数({updated_max[i]})を上回っています。")
             
             total_shifts_needed = sum(st.session_state.member_targets.get(m, 1) for m in attendees)
             total_slots_max = sum(calc_max_l)
@@ -988,28 +1065,19 @@ if clean_df is not None:
                 st.warning(f"※ 希望参加回数の合計({total_shifts_needed})が、設定された枠の最大合計({total_slots_max})を超えています。全員の希望を満たすのは不可能です。")
 
             if error_messages:
-                for msg in error_messages:
-                    st.error(msg)
+                for msg in error_messages: st.error(msg)
             else:
                 if st.session_state.shift_result is not None:
                     st.session_state.confirm_overwrite = True
                 else:
                     st.session_state.confirm_overwrite = False
-                    
                     with st.spinner('計算中...'):
-                        res, success = solve_shift_schedule(
-                            clean_df, 
-                            calc_min_l, 
-                            calc_max_l, 
-                            st.session_state.roster_df, 
-                            calc_fresh_min_l, 
-                            calc_fresh_max_l,
-                            member_targets=st.session_state.member_targets
-                        )
+                        res, success = solve_shift_schedule(clean_df, calc_min_l, calc_max_l, st.session_state.roster_df, calc_fresh_min_l, calc_fresh_max_l, member_targets=st.session_state.member_targets)
                     if success:
                         st.session_state.shift_result = res
                         st.session_state.editing_member = None
                         st.session_state.editing_date = None
+                        refresh_editor_cache(res)
                         st.rerun()
                     else: st.error("お稽古を作成できませんでした。条件を見直してください。")
 
@@ -1018,19 +1086,16 @@ if clean_df is not None:
             col_ov_y, col_ov_n = st.columns([1, 1])
             if col_ov_y.button("はい、上書き生成します", use_container_width=True):
                 st.session_state.confirm_overwrite = False
-                
                 dates = st.session_state.settings_df["日程"].tolist()
                 min_l_raw = st.session_state.settings_df["最小人数"].tolist()
                 max_l_raw = st.session_state.settings_df["最大人数"].tolist()
                 fmin_raw = st.session_state.settings_df["1年生最小"].tolist()
                 fmax_raw = st.session_state.settings_df["1年生最大"].tolist()
                 enabled_l = st.session_state.settings_df["有効"].tolist()
-
                 calc_min_l = []
                 calc_max_l = []
                 calc_fresh_min_l = []
                 calc_fresh_max_l = []
-                
                 for i in range(len(dates)):
                     if enabled_l[i]:
                         calc_min_l.append(min_l_raw[i])
@@ -1042,24 +1107,15 @@ if clean_df is not None:
                         calc_max_l.append(0)
                         calc_fresh_min_l.append(None)
                         calc_fresh_max_l.append(None)
-                
                 with st.spinner('計算中...'):
-                    res, success = solve_shift_schedule(
-                        clean_df, 
-                        calc_min_l, 
-                        calc_max_l, 
-                        st.session_state.roster_df, 
-                        calc_fresh_min_l, 
-                        calc_fresh_max_l,
-                        member_targets=st.session_state.member_targets
-                    )
+                    res, success = solve_shift_schedule(clean_df, calc_min_l, calc_max_l, st.session_state.roster_df, calc_fresh_min_l, calc_fresh_max_l, member_targets=st.session_state.member_targets)
                 if success:
                     st.session_state.shift_result = res
                     st.session_state.editing_member = None
                     st.session_state.editing_date = None
+                    refresh_editor_cache(res)
                     st.rerun()
                 else: st.error("お稽古を作成できませんでした。条件を見直してください。")
-            
             if col_ov_n.button("いいえ", use_container_width=True):
                 st.session_state.confirm_overwrite = False
                 st.rerun()
@@ -1095,12 +1151,10 @@ if clean_df is not None:
             extra_map = {}
             has_extra_col = False
             col3_name = ""
-            
             if st.session_state.roster_df is not None:
                 try:
                     for _, r in st.session_state.roster_df.iterrows():
                         grade_map[str(r['氏名']).strip()] = str(r['学年']).strip()
-                    
                     if len(st.session_state.roster_df.columns) >= 3:
                         has_extra_col = True
                         col3_name = st.session_state.roster_df.columns[2]
@@ -1111,13 +1165,10 @@ if clean_df is not None:
                 except: pass
             
             show_extra_info = False
-            if has_extra_col:
-                show_extra_info = st.toggle(f"「{col3_name}」を表示する", value=True)
-
+            if has_extra_col: show_extra_info = st.toggle(f"「{col3_name}」を表示する", value=True)
             st.write("")
 
             current_df = st.session_state.shift_result.copy()
-            date_to_row = {row['日程']: idx for idx, row in current_df.iterrows()}
             max_people_in_day = 0
             for _, row in current_df.iterrows():
                 val = row["担当者"]
@@ -1126,18 +1177,34 @@ if clean_df is not None:
                     if count > max_people_in_day: max_people_in_day = count
             col_ratios = [3] * max_people_in_day + [1] 
 
+            # キャッシュ利用
+            if not st.session_state.status_map_cache or not st.session_state.valid_dates_cache:
+                update_static_caches()
+            status_map = st.session_state.status_map_cache
+            valid_dates_for_member = st.session_state.valid_dates_cache
+
+            if not st.session_state.editor_cache:
+                refresh_editor_cache(current_df)
+            
+            display_name_map = st.session_state.editor_cache['display_name_map']
+            current_assignments_map = st.session_state.editor_cache['current_assignments_map']
+            date_to_row = st.session_state.editor_cache['date_to_row']
+
             for date_idx, date_val in enumerate(dates_list):
                 c_date, c_members = st.columns([1.2, 8], gap="small")
                 with c_date:
                     btn_label = f"\u200E{date_val}"
                     disabled_state = False
                     on_click = "select_date"
+                    
                     if st.session_state.editing_member:
                         member_a = st.session_state.editing_member['name']
                         date_a = st.session_state.editing_member['source_date']
                         if date_val != date_a:
-                            status = get_status(clean_df, date_val, member_a)
-                            if status in ["○", "△"]:
+                            status = status_map.get((date_val, member_a), '-')
+                            already_assigned = member_a in current_assignments_map.get(date_val, set())
+                            if already_assigned: disabled_state = True
+                            elif status in ["○", "△"]:
                                 btn_label += "\u200b\u200b"
                                 if status == "△": btn_label += "(△)"
                                 on_click = "move_member_here"
@@ -1146,6 +1213,7 @@ if clean_df is not None:
                     elif st.session_state.editing_date == date_val:
                         btn_label += "\u200b"
                         on_click = "cancel_date"
+                        
                     if st.button(btn_label, key=f"d_{date_val}", disabled=disabled_state, use_container_width=True):
                         if on_click == "select_date":
                             st.session_state.editing_date = date_val
@@ -1170,6 +1238,7 @@ if clean_df is not None:
                             current_df.at[row_idx_curr, "人数"] = len(list_curr)
                             st.session_state.shift_result = current_df
                             st.session_state.editing_member = None
+                            refresh_editor_cache(current_df)
                             st.rerun()
                 with c_members:
                     row_idx = date_to_row.get(date_val)
@@ -1177,42 +1246,56 @@ if clean_df is not None:
                         assigned_val = current_df.at[row_idx, "担当者"]
                         assigned_list = str(assigned_val).split(", ") if pd.notna(assigned_val) and str(assigned_val) != "" else []
                         cols = st.columns(col_ratios, gap="small")
+                        
                         for i, member_b in enumerate(assigned_list):
                             is_mem_edit = st.session_state.editing_member is not None
                             is_date_edit = st.session_state.editing_date is not None
-                            is_self_mem = (is_mem_edit and st.session_state.editing_member['name'] == member_b and st.session_state.editing_member['source_date'] == date_val)
-                            is_locked = not can_member_move(clean_df, date_val, member_b)
                             
-                            display_name_base = get_member_display_name(member_b, date_val, current_df)
+                            movable_days_set = valid_dates_for_member.get(member_b, set())
+                            has_other_options = len(movable_days_set - {date_val}) > 0
+                            is_locked = not has_other_options
                             
-                            if member_b in grade_map: 
-                                display_name = f"{grade_map[member_b]}.{display_name_base}"
-                            else:
-                                display_name = display_name_base
-                                
-                            if show_extra_info and member_b in extra_map:
-                                display_name += f"({extra_map[member_b]})"
+                            display_name_base = display_name_map.get((member_b, date_val), member_b)
+                            if member_b in grade_map: display_name = f"{grade_map[member_b]}.{display_name_base}"
+                            else: display_name = display_name_base
+                            if show_extra_info and member_b in extra_map: display_name += f"({extra_map[member_b]})"
+                            
                             if not is_mem_edit and not is_date_edit and is_locked:
                                 lock_label = display_name
                                 cols[i].markdown(f"<div class='locked-member'>🔒{lock_label}</div>", unsafe_allow_html=True)
                                 continue 
-                            status_this_day = get_status(clean_df, date_val, member_b)
+                            
+                            status_this_day = status_map.get((date_val, member_b), '-')
                             label = display_name
                             if status_this_day == "△": label += "(△)"
-                            btn_key = f"b_{date_val}_{member_b}"
+                            btn_key = f"b_{date_val}_{member_b}_{i}" 
+                            
                             on_click = "select_member"
                             disabled_state = False
+                            
                             if is_mem_edit:
+                                member_a = st.session_state.editing_member['name']
+                                date_a = st.session_state.editing_member['source_date']
+                                is_self_mem = (member_a == member_b and date_a == date_val)
                                 if is_self_mem:
                                     label += "\u200b"
                                     on_click = "cancel_member"
                                 else:
-                                    mem_a = st.session_state.editing_member['name']
-                                    date_a = st.session_state.editing_member['source_date']
-                                    if mem_a != member_b and date_val != date_a:
-                                        stat_a = get_status(clean_df, date_val, mem_a)
-                                        stat_b = get_status(clean_df, date_a, member_b)
-                                        if stat_a in ["○", "△"] and stat_b in ["○", "△"]:
+                                    members_in_target = current_assignments_map.get(date_val, set())
+                                    is_a_duplicate_in_target = (member_a in members_in_target) and (member_a != member_b)
+                                    members_in_source = current_assignments_map.get(date_a, set())
+                                    is_b_duplicate_in_source = (member_b in members_in_source) and (member_b != member_a)
+                                    
+                                    if member_a != member_b and date_val != date_a:
+                                        stat_a = status_map.get((date_val, member_a), '-')
+                                        stat_b = status_map.get((date_a, member_b), '-')
+                                        if is_a_duplicate_in_target or is_b_duplicate_in_source:
+                                            if is_locked:
+                                                lock_label = display_name
+                                                cols[i].markdown(f"<div class='locked-member'>🔒{lock_label}</div>", unsafe_allow_html=True)
+                                                continue
+                                            else: disabled_state = True
+                                        elif stat_a in ["○", "△"] and stat_b in ["○", "△"]:
                                             label += "\u200b\u200b"
                                             on_click = "swap"
                                         elif is_locked:
@@ -1225,8 +1308,16 @@ if clean_df is not None:
                             elif is_date_edit:
                                 tgt_date = st.session_state.editing_date
                                 if date_val != tgt_date:
-                                    stat = get_status(clean_df, tgt_date, member_b)
-                                    if stat in ["○", "△"]:
+                                    stat = status_map.get((tgt_date, member_b), '-')
+                                    members_in_tgt = current_assignments_map.get(tgt_date, set())
+                                    is_duplicate = member_b in members_in_tgt
+                                    if is_duplicate:
+                                         if is_locked:
+                                            lock_label = display_name
+                                            cols[i].markdown(f"<div class='locked-member'>🔒{lock_label}</div>", unsafe_allow_html=True)
+                                            continue
+                                         else: disabled_state = True
+                                    elif stat in ["○", "△"]:
                                         label += "\u200b\u200b"
                                         on_click = "move_to_date"
                                     elif is_locked:
@@ -1236,6 +1327,7 @@ if clean_df is not None:
                                 elif is_locked:
                                     cols[i].markdown(f"<div class='locked-member'>🔒{display_name}</div>", unsafe_allow_html=True)
                                     continue
+                            
                             if cols[i].button(label, key=btn_key, disabled=disabled_state, use_container_width=True):
                                 if on_click == "select_member":
                                     st.session_state.editing_member = {'name': member_b, 'source_date': date_val}
@@ -1260,6 +1352,7 @@ if clean_df is not None:
                                     current_df.at[idx_b, "担当者"] = ", ".join(l_b)
                                     st.session_state.shift_result = current_df
                                     st.session_state.editing_member = None
+                                    refresh_editor_cache(current_df)
                                     st.rerun()
                                 elif on_click == "move_to_date":
                                     tgt_date = st.session_state.editing_date
@@ -1276,6 +1369,7 @@ if clean_df is not None:
                                     current_df.at[idx_tgt, "人数"] = len(l_tgt)
                                     st.session_state.shift_result = current_df
                                     st.session_state.editing_date = None
+                                    refresh_editor_cache(current_df)
                                     st.rerun()
             
             st.write("")
@@ -1297,8 +1391,6 @@ if clean_df is not None:
                 pickle.dump(save_data_temp, buffer_temp)
                 today_str = datetime.now().strftime('%Y%m%d')
                 file_name_temp = f"{today_str}_backup.okeiko"
-                
-                # ★修正: ボタンラベルから絵文字を削除
                 st.download_button("作業を保存", data=buffer_temp, file_name=file_name_temp, mime="application/octet-stream", use_container_width=True)
 
             st.write(""); st.write("")
@@ -1307,20 +1399,20 @@ if clean_df is not None:
 
 ※(△)について、伝助のコメントを確認し、「遅れ」もしくは「早退」に書き換えた上でご利用ください。""")
             text_output = ""
-            for _, row in current_df.iterrows():
-                date_str = row['日程']
-                raw_members = row['担当者']
-                if raw_members:
-                    member_list = raw_members.split(", ")
-                    formatted_members = []
-                    for member in member_list:
-                        # ★修正: プレビューにも番号をつける
-                        display_name_base = get_member_display_name(member, date_str, current_df)
-                        status = get_status(clean_df, date_str, member)
-                        if status == "△": formatted_members.append(f"{display_name_base}(△)")
-                        else: formatted_members.append(display_name_base)
-                    members_str_jp = "、".join(formatted_members)
-                    text_output += f"{date_str}{members_str_jp}\n"
+            for d in dates_list: # current_dfの順序ではなくリスト順
+                row_idx = date_to_row.get(d)
+                if row_idx is not None:
+                    raw_val = current_df.at[row_idx, "担当者"]
+                    if pd.notna(raw_val) and str(raw_val) != "":
+                        member_list = str(raw_val).split(", ")
+                        formatted_members = []
+                        for member in member_list:
+                            display_name_base = display_name_map.get((member, d), member)
+                            status = status_map.get((d, member), '-')
+                            if status == "△": formatted_members.append(f"{display_name_base}(△)")
+                            else: formatted_members.append(display_name_base)
+                        members_str_jp = "、".join(formatted_members)
+                        text_output += f"{d}{members_str_jp}\n"
             
             st.code(text_output, language='text')
             
